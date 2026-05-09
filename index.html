@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Win-to-Race</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f7;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --panel: rgba(255, 255, 255, 0.78);
+      --line: rgba(0, 0, 0, 0.1);
+      --accent: #0a84ff;
+      --good: #248a3d;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111113;
+        --text: #f5f5f7;
+        --muted: #a1a1a6;
+        --panel: rgba(32, 32, 36, 0.82);
+        --line: rgba(255, 255, 255, 0.12);
+        --accent: #5e9eff;
+        --good: #30d158;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1080px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 54px 0;
+    }
+
+    header {
+      display: grid;
+      gap: 18px;
+      padding-bottom: 34px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.4rem, 5vw, 5rem);
+      line-height: 0.96;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 720px;
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 2vw, 1.35rem);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    a.button {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    a.primary {
+      border-color: transparent;
+      background: var(--accent);
+      color: white;
+    }
+
+    section {
+      padding: 32px 0 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 1.15rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      min-height: 148px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 1rem;
+    }
+
+    .card p,
+    li {
+      color: var(--muted);
+    }
+
+    .card p {
+      margin: 0;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: rgba(127, 127, 127, 0.16);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.92em;
+    }
+
+    .status {
+      color: var(--good);
+      font-weight: 700;
+    }
+
+    footer {
+      padding-top: 34px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 780px) {
+      main {
+        width: min(100% - 28px, 1080px);
+        padding: 34px 0;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Win-to-Race</h1>
+      <p class="lead">
+        Native macOS orchestration for multiple coding CLIs. One repository and one problem go in;
+        isolated agent runs, logs, ADRs, feedback, and comparable results come out.
+      </p>
+      <div class="actions">
+        <a class="button primary" href="README.md">Read README</a>
+        <a class="button" href="docs/advanced-task-format.md">Advanced task format</a>
+      </div>
+    </header>
+
+    <section>
+      <h2>What V1 Does</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>Autonomous runs</h3>
+          <p>W2R discovers available coding CLIs and starts isolated branches, workspaces, logs, and sessions.</p>
+        </article>
+        <article class="card">
+          <h3>Human in the loop</h3>
+          <p>Agent questions remain visible so the developer can answer without manually driving each CLI.</p>
+        </article>
+        <article class="card">
+          <h3>Learning data</h3>
+          <p>Feedback and runtime files create a long-term record of which agents work best for real tasks.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Project Status</h2>
+      <ul>
+        <li><span class="status">Build-ready</span> SwiftPM macOS app target.</li>
+        <li>Simple Mode for one-off repository tasks.</li>
+        <li>Advanced Mode for Markdown task queues.</li>
+        <li>Setup view with CLI checks, Keychain-backed API keys, and ENV editor.</li>
+        <li>Diagnostics view with copyable failure records.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Run Locally</h2>
+      <p>Use <code>./script/build_and_run.sh</code> from the repository root.</p>
+    </section>
+
+    <footer>
+      Win-to-Race is built for developers who want AI agents to race on real engineering problems without manual CLI orchestration.
+    </footer>
+  </main>
+</body>
+</html>
