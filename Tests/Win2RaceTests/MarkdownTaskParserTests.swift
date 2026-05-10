@@ -183,4 +183,14 @@ final class MarkdownTaskParserTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("node_modules").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: git.appendingPathComponent("HEAD").path))
     }
+
+    func testCLIDetectorSearchesUserInstallDirectories() {
+        let home = "/Users/example"
+        let directories = CLIDetector.candidateDirectories(pathValue: "/usr/bin", homeDirectory: home)
+
+        XCTAssertTrue(directories.contains("/Users/example/.opencode/bin"))
+        XCTAssertTrue(directories.contains("/Users/example/.local/bin"))
+        XCTAssertTrue(directories.contains("/Users/example/.bun/bin"))
+        XCTAssertEqual(directories.filter { $0 == "/usr/bin" }.count, 1)
+    }
 }

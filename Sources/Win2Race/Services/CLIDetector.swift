@@ -34,20 +34,39 @@ enum CLIDetector {
         }
     }
 
-    private static func findExecutable(named names: [String]) -> String? {
-        let fileManager = FileManager.default
-        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    static func candidateDirectories(pathValue: String, homeDirectory: String = NSHomeDirectory()) -> [String] {
+        let home = URL(fileURLWithPath: homeDirectory, isDirectory: true)
         let pathCandidates = pathValue
             .split(separator: ":")
             .map(String.init) + [
+                home.appendingPathComponent(".opencode/bin", isDirectory: true).path,
+                home.appendingPathComponent(".local/bin", isDirectory: true).path,
+                home.appendingPathComponent("bin", isDirectory: true).path,
+                home.appendingPathComponent(".bun/bin", isDirectory: true).path,
+                home.appendingPathComponent(".cargo/bin", isDirectory: true).path,
+                home.appendingPathComponent(".volta/bin", isDirectory: true).path,
+                home.appendingPathComponent(".npm-global/bin", isDirectory: true).path,
+                home.appendingPathComponent(".asdf/shims", isDirectory: true).path,
+                home.appendingPathComponent(".mise/shims", isDirectory: true).path,
+                home.appendingPathComponent("Library/pnpm", isDirectory: true).path,
                 "/opt/homebrew/bin",
+                "/opt/homebrew/sbin",
                 "/usr/local/bin",
+                "/usr/local/sbin",
                 "/usr/bin",
-                "/bin"
-            ]
+                "/bin",
+                "/usr/sbin",
+                "/sbin"
+            ] + versionManagerBinDirectories(home: home)
 
         var seen = Set<String>()
-        let directories = pathCandidates.filter { seen.insert($0).inserted }
+        return pathCandidates.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private static func findExecutable(named names: [String]) -> String? {
+        let fileManager = FileManager.default
+        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let directories = candidateDirectories(pathValue: pathValue)
 
         for name in names {
             if name.hasPrefix("/") && fileManager.isExecutableFile(atPath: name) {
@@ -63,5 +82,25 @@ enum CLIDetector {
         }
 
         return nil
+    }
+
+    private static func versionManagerBinDirectories(home: URL) -> [String] {
+        let fileManager = FileManager.default
+        let roots = [
+            home.appendingPathComponent(".nvm/versions/node", isDirectory: true),
+            home.appendingPathComponent(".fnm/node-versions", isDirectory: true)
+        ]
+
+        return roots.flatMap { root in
+            guard let versions = try? fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return [String]()
+            }
+
+            return versions.map { $0.appendingPathComponent("bin", isDirectory: true).path }
+        }
     }
 }
