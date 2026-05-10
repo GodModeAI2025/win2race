@@ -80,9 +80,9 @@ enum AgentKind: String, CaseIterable, Codable, Hashable, Identifiable {
         case .openAI: ["OPENAI_API_KEY"]
         case .deepSeek: ["DEEPSEEK_API_KEY"]
         case .qwen: ["OPENROUTER_API_KEY"]
-        case .kimi: ["OPENROUTER_API_KEY", "MOONSHOT_API_KEY"]
+        case .kimi: ["OPENROUTER_API_KEY"]
         case .groq: ["GROQ_API_KEY"]
-        case .glm: ["OPENROUTER_API_KEY", "ZAI_API_KEY"]
+        case .glm: ["OPENROUTER_API_KEY"]
         case .aider, .openCode: []
         }
     }

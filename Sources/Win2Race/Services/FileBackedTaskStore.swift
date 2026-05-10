@@ -340,13 +340,12 @@ final class FileBackedTaskStore {
         let root = URL(fileURLWithPath: task.rootPath, isDirectory: true)
         let entries = try fileManager.contentsOfDirectory(
             at: root,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         )
 
         var runs: [AgentRunRecord] = []
-        for entry in entries {
-            let runURL = entry.appendingPathComponent("run.json")
+        for runURL in runRecordURLs(in: entries) {
             do {
                 runs.append(try decode(AgentRunRecord.self, from: runURL))
             } catch {
@@ -365,6 +364,34 @@ final class FileBackedTaskStore {
         }
 
         return runs.sorted { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+    }
+
+    private func runRecordURLs(in entries: [URL]) -> [URL] {
+        var runURLs: [URL] = []
+
+        for entry in entries where isDirectory(entry) {
+            let directRunURL = entry.appendingPathComponent("run.json")
+            if fileManager.fileExists(atPath: directRunURL.path) {
+                runURLs.append(directRunURL)
+            }
+
+            guard let nestedEntries = try? fileManager.contentsOfDirectory(
+                at: entry,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for nestedEntry in nestedEntries where nestedEntry.lastPathComponent != "workspace" && isDirectory(nestedEntry) {
+                let nestedRunURL = nestedEntry.appendingPathComponent("run.json")
+                if fileManager.fileExists(atPath: nestedRunURL.path) {
+                    runURLs.append(nestedRunURL)
+                }
+            }
+        }
+
+        return runURLs
     }
 
     func writeDiagnostic(_ diagnostic: DiagnosticRecord) throws {
@@ -546,6 +573,10 @@ final class FileBackedTaskStore {
                 try filtered.write(to: url, atomically: true, encoding: .utf8)
             }
         }
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
     private func allocatedSize(of url: URL) -> UInt64 {

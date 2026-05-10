@@ -29,6 +29,22 @@ enum ProcessRunner {
             let stderr = Pipe()
             process.standardOutput = stdout
             process.standardError = stderr
+            let stdoutCollector = PipeDataCollector()
+            let stderrCollector = PipeDataCollector()
+
+            stdout.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if !data.isEmpty {
+                    stdoutCollector.append(data)
+                }
+            }
+
+            stderr.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if !data.isEmpty {
+                    stderrCollector.append(data)
+                }
+            }
 
             do {
                 let termination = DispatchSemaphore(value: 0)
@@ -39,13 +55,15 @@ enum ProcessRunner {
 
                 let timedOut = waitForProcess(process, termination: termination, timeout: timeout)
 
-                let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
+                stdoutCollector.append(stdout.fileHandleForReading.readDataToEndOfFile())
+                stderrCollector.append(stderr.fileHandleForReading.readDataToEndOfFile())
 
                 if timedOut {
                     return ProcessResult(
                         exitCode: -2,
-                        stdout: String(data: stdoutData, encoding: .utf8) ?? "",
+                        stdout: stdoutCollector.string(),
                         stderr: "Process timed out after \(Int(timeout ?? 0)) seconds.",
                         duration: Date().timeIntervalSince(started)
                     )
@@ -53,11 +71,13 @@ enum ProcessRunner {
 
                 return ProcessResult(
                     exitCode: process.terminationStatus,
-                    stdout: String(data: stdoutData, encoding: .utf8) ?? "",
-                    stderr: String(data: stderrData, encoding: .utf8) ?? "",
+                    stdout: stdoutCollector.string(),
+                    stderr: stderrCollector.string(),
                     duration: Date().timeIntervalSince(started)
                 )
             } catch {
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
                 return ProcessResult(
                     exitCode: -1,
                     stdout: "",
@@ -84,6 +104,27 @@ enum ProcessRunner {
             process.waitUntilExit()
         }
         return timedOut
+    }
+}
+
+private final class PipeDataCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else {
+            return
+        }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func string() -> String {
+        lock.lock()
+        let snapshot = data
+        lock.unlock()
+        return String(data: snapshot, encoding: .utf8) ?? ""
     }
 }
 
@@ -167,7 +208,15 @@ enum AgentRuntime {
         process.terminationHandler = { process in
             outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
+            let finalOutput = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let finalError = errorPipe.fileHandleForReading.readDataToEndOfFile()
             Task { @MainActor in
+                if !finalOutput.isEmpty, let text = String(data: finalOutput, encoding: .utf8) {
+                    onOutput(text, false)
+                }
+                if !finalError.isEmpty, let text = String(data: finalError, encoding: .utf8) {
+                    onOutput(text, true)
+                }
                 onExit(process.terminationStatus)
             }
         }

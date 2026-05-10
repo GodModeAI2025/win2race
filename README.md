@@ -20,7 +20,7 @@ Win-to-Race is a native macOS app that orchestrates multiple coding CLIs on the 
 
 ## Setup Readiness
 
-The Setup screen is intentionally strict. A provider token is not considered green just because it exists in the macOS Keychain. Each token must be saved and then tested.
+The Setup screen is intentionally strict. Win-to-Race only asks for provider tokens needed by installed/configured runtimes. A provider token is not considered green just because it exists in the macOS Keychain. Each visible token must be saved and then tested.
 
 The overview tells the user the next concrete action:
 
@@ -37,7 +37,7 @@ This avoids the old failure mode where setup looked ready but the first agent ru
 
 Each saved API token has its own `Test` button in Setup. The test performs the smallest practical provider check and stores a copyable result.
 
-Supported test plans:
+Supported active test plans:
 
 | Key | Provider | Check |
 | --- | --- | --- |
@@ -47,12 +47,10 @@ Supported test plans:
 | `GROQ_API_KEY` | Groq | Minimal OpenAI-compatible chat request |
 | `DEEPSEEK_API_KEY` | DeepSeek | Minimal chat request |
 | `OPENROUTER_API_KEY` | OpenRouter | Key metadata endpoint with usage/limit parsing |
-| `MOONSHOT_API_KEY` | Kimi/Moonshot | Minimal chat request |
-| `ZAI_API_KEY` | Z.ai / GLM | Minimal chat request |
 
 Most provider tests make a minimal model call and can consume a tiny amount of budget. OpenRouter uses its key metadata endpoint where possible and marks exhausted limits as not green.
 
-Qwen uses OpenRouter in V1. DashScope is intentionally not required.
+Qwen, Kimi, and GLM use OpenRouter in V1. DashScope is intentionally not required, and direct Moonshot/Z.ai keys are not part of the default green path.
 
 ## Advanced Task Format
 

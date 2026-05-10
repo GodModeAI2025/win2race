@@ -8,9 +8,7 @@ enum SetupGuidance {
         "GOOGLE_API_KEY": "https://aistudio.google.com/app/apikey",
         "GROQ_API_KEY": "https://console.groq.com/keys",
         "DEEPSEEK_API_KEY": "https://platform.deepseek.com/api_keys",
-        "OPENROUTER_API_KEY": "https://openrouter.ai/settings/keys",
-        "MOONSHOT_API_KEY": "https://platform.moonshot.ai/console/api-keys",
-        "ZAI_API_KEY": "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys"
+        "OPENROUTER_API_KEY": "https://openrouter.ai/settings/keys"
     ]
 
     static func providerKeyURL(for key: String) -> String? {

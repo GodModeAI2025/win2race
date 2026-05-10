@@ -593,7 +593,8 @@ struct SetupView: View {
     }
 
     private var setupIsGreen: Bool {
-        store.installations.contains(where: \.isInstalled) &&
+        !store.runnableInstallations.isEmpty &&
+        !store.hasMisconfiguredRuntime() &&
         store.providerSecretStates.allSatisfy { keyIsGreen($0) } &&
         AgentKind.allCases.allSatisfy { envIsGreen($0) }
     }
@@ -604,14 +605,18 @@ struct SetupView: View {
         }
 
         let missingCLI = store.installations.filter { !$0.isInstalled }.count
+        let runtimeIssues = store.runtimeRecords.filter { $0.health == .misconfigured }.count
         let keyIssues = store.providerSecretStates.filter { !keyIsGreen($0) }.count
         let envIssues = AgentKind.allCases.filter { !envIsGreen($0) }.count
         var parts: [String] = []
-        if store.installations.contains(where: \.isInstalled) == false {
-            parts.append("mindestens eine Coding-CLI installieren")
+        if store.runnableInstallations.isEmpty {
+            parts.append("mindestens einen Agenten startbereit machen")
         }
         if missingCLI > 0 {
             parts.append("\(missingCLI) optionale CLI-Einträge prüfen")
+        }
+        if runtimeIssues > 0 {
+            parts.append("\(runtimeIssues) Runtime-Profil\(runtimeIssues == 1 ? "" : "e") korrigieren")
         }
         if keyIssues > 0 {
             parts.append("\(keyIssues) API-Key\(keyIssues == 1 ? "" : "s") speichern oder testen")
@@ -651,6 +656,18 @@ struct SetupView: View {
                     urlButtonTitle: "Download öffnen",
                     command: cliInstallCommand(for: firstMissing.agent),
                     focusAgent: firstMissing.agent
+                )
+            )
+        }
+
+        if let firstMisconfiguredRuntime = store.runtimeRecords.first(where: { $0.health == .misconfigured }) {
+            items.append(
+                SetupActionItem(
+                    systemImage: firstMisconfiguredRuntime.agent.systemImage,
+                    color: .orange,
+                    title: "\(firstMisconfiguredRuntime.agent.displayName)-Profil korrigieren",
+                    detail: "\(firstMisconfiguredRuntime.message) Unten in Agent-Profile \(firstMisconfiguredRuntime.agent.displayName) wählen, CLI Override korrigieren oder zurücksetzen und speichern.",
+                    focusAgent: firstMisconfiguredRuntime.agent
                 )
             )
         }

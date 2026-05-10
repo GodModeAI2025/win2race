@@ -153,20 +153,6 @@ enum ProviderTokenTester {
                 budgetProbe: true,
                 note: "OpenRouter-Key-Metadaten inklusive Limit/Usage, wenn der Provider sie liefert."
             )
-        case "MOONSHOT_API_KEY":
-            return chatCompletionsPlan(
-                provider: provider,
-                url: "https://api.moonshot.ai/v1/chat/completions",
-                bearer: token,
-                model: "moonshot-v1-8k"
-            )
-        case "ZAI_API_KEY":
-            return chatCompletionsPlan(
-                provider: provider,
-                url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-                bearer: token,
-                model: "glm-4-flash"
-            )
         default:
             return nil
         }

@@ -75,6 +75,17 @@ final class MarkdownTaskParserTests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("timed out"))
     }
 
+    func testProcessRunnerDrainsLargeOutputWithoutBlocking() async {
+        let result = await ProcessRunner.run(
+            executable: "/bin/sh",
+            arguments: ["-c", "i=0; while [ $i -lt 20000 ]; do echo line-$i; i=$((i+1)); done"],
+            timeout: 5
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("line-19999"))
+    }
+
     func testEnvironmentFileLoaderThrowsOnInvalidSyntax() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -164,6 +175,77 @@ final class MarkdownTaskParserTests: XCTestCase {
         XCTAssertEqual(loaded.isError, event.isError)
     }
 
+    func testLoadRunsSupportsTimestampedAndLegacyRunDirectories() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = FileBackedTaskStore(rootURL: root)
+        try store.ensureRoot()
+
+        var task = W2RTask.fromDraft(
+            TaskDraft(repository: "https://github.com/org/repo", title: "Race", description: "Run twice"),
+            mode: .simple,
+            rootPath: ""
+        )
+        task.rootPath = store.taskRootURL(slug: task.slug, id: task.id).path
+        try store.writeTask(task)
+
+        let legacyRun = runRecord(
+            taskID: task.id,
+            agent: .claude,
+            baseURL: URL(fileURLWithPath: task.rootPath).appendingPathComponent("claude", isDirectory: true)
+        )
+        let timestampedRun = runRecord(
+            taskID: task.id,
+            agent: .openAI,
+            baseURL: URL(fileURLWithPath: task.rootPath)
+                .appendingPathComponent("openAI", isDirectory: true)
+                .appendingPathComponent("2026-05-10-1245-abcdef12", isDirectory: true)
+        )
+        try store.writeRun(legacyRun)
+        try store.writeRun(timestampedRun)
+
+        let workspace = URL(fileURLWithPath: task.rootPath)
+            .appendingPathComponent("claude/workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try #"{"not":"a w2r run"}"#.write(to: workspace.appendingPathComponent("run.json"), atomically: true, encoding: .utf8)
+
+        let runs = try store.loadRunsReportingDiagnostics(for: task)
+
+        XCTAssertEqual(Set(runs.map(\.id)), Set([legacyRun.id, timestampedRun.id]))
+    }
+
+    @MainActor
+    func testAgentRuntimeDrainsFinalOutputOnExit() async throws {
+        let outputExpectation = expectation(description: "final output")
+        let exitExpectation = expectation(description: "exit")
+        var receivedOutput = ""
+        var outputFulfilled = false
+
+        _ = try AgentRuntime.start(
+            runID: UUID(),
+            executable: "/bin/sh",
+            arguments: ["-c", "printf final-output"],
+            currentDirectory: FileManager.default.temporaryDirectory,
+            environment: [:],
+            onStarted: { _ in },
+            onOutput: { text, isError in
+                XCTAssertFalse(isError)
+                receivedOutput += text
+                if !outputFulfilled, receivedOutput.contains("final-output") {
+                    outputFulfilled = true
+                    outputExpectation.fulfill()
+                }
+            },
+            onExit: { exitCode in
+                XCTAssertEqual(exitCode, 0)
+                exitExpectation.fulfill()
+            }
+        )
+
+        await fulfillment(of: [outputExpectation, exitExpectation], timeout: 2)
+        XCTAssertTrue(receivedOutput.contains("final-output"))
+    }
+
     func testWorkspaceCleanupRemovesArtifactsButPreservesGit() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -208,6 +290,12 @@ final class MarkdownTaskParserTests: XCTestCase {
     func testDashScopeIsNotRequiredForQwen() {
         XCTAssertEqual(AgentKind.qwen.requiredEnvironmentKeys, ["OPENROUTER_API_KEY"])
         XCTAssertNil(SetupGuidance.providerKeyURL(for: "DASHSCOPE_API_KEY"))
+    }
+
+    func testOpenRouterBackedAgentsDoNotRequireDirectVendorKeys() {
+        XCTAssertEqual(AgentKind.qwen.requiredEnvironmentKeys, ["OPENROUTER_API_KEY"])
+        XCTAssertEqual(AgentKind.kimi.requiredEnvironmentKeys, ["OPENROUTER_API_KEY"])
+        XCTAssertEqual(AgentKind.glm.requiredEnvironmentKeys, ["OPENROUTER_API_KEY"])
     }
 
     func testDashScopeIsRemovedFromExistingQwenEnv() throws {
@@ -306,5 +394,31 @@ final class MarkdownTaskParserTests: XCTestCase {
         XCTAssertFalse(result.budgetLikelyAvailable)
         XCTAssertTrue(result.summary.contains("Budget"))
         XCTAssertTrue(result.details.contains("Usage 10.0 von Limit 10.0"))
+    }
+
+    private func runRecord(taskID: UUID, agent: AgentKind, baseURL: URL) -> AgentRunRecord {
+        AgentRunRecord(
+            id: UUID(),
+            taskID: taskID,
+            agent: agent,
+            status: .succeeded,
+            commandPath: "/usr/bin/true",
+            branchName: "task/race/\(agent.rawValue)/2026-05-10-1245",
+            workspacePath: baseURL.appendingPathComponent("workspace", isDirectory: true).path,
+            logPath: baseURL.appendingPathComponent("session.log").path,
+            eventsPath: baseURL.appendingPathComponent("events.jsonl").path,
+            adrPath: baseURL.appendingPathComponent("adr.md").path,
+            runtimePath: baseURL.appendingPathComponent("runtime.md").path,
+            feedbackPath: baseURL.appendingPathComponent("feedback.md").path,
+            startedAt: Date(),
+            endedAt: Date(),
+            exitCode: 0,
+            estimatedTokens: 0,
+            estimatedCost: nil,
+            lastAction: "done",
+            pendingQuestion: nil,
+            errorSummary: nil,
+            commitHash: "abc123"
+        )
     }
 }

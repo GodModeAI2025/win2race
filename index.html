@@ -451,8 +451,9 @@
     <section>
       <h2>Setup Guidance &amp; Token Checks</h2>
       <p class="subtitle">
-        The Setup screen is strict by design: a provider key is green only after it is saved and successfully tested.
-        Failed checks stay visible with copyable diagnostics so errors do not disappear in logs.
+        The Setup screen is strict by design: Win-to-Race only asks for provider keys needed by installed runtimes,
+        and a visible provider key is green only after it is saved and successfully tested. Failed checks stay visible
+        with copyable diagnostics so errors do not disappear in logs.
       </p>
       <div class="grid-3">
         <article class="card">
@@ -465,15 +466,15 @@
         <article class="card">
           <h3>Provider Probes</h3>
           <p>
-            OpenAI, Anthropic, Gemini, Groq, DeepSeek, Moonshot, and Z.ai are checked with minimal model requests.
+            OpenAI, Anthropic, Gemini, Groq, and DeepSeek are checked with minimal model requests.
             OpenRouter uses its key metadata endpoint and reads usage/limit when available.
           </p>
         </article>
         <article class="card">
           <h3>No DashScope Requirement</h3>
           <p>
-            Qwen runs through OpenRouter in V1. DashScope keys are not required, and legacy DashScope entries are
-            removed from the generated Qwen environment file.
+            Qwen, Kimi, and GLM run through OpenRouter in V1. DashScope keys are not required, and direct
+            Moonshot/Z.ai keys are not part of the default green path.
           </p>
         </article>
       </div>

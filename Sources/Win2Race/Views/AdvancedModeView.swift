@@ -62,6 +62,7 @@ struct AdvancedModeView: View {
                             } label: {
                                 Label("Starten", systemImage: "play.fill")
                             }
+                            .disabled(store.runnableInstallations.isEmpty)
                         }
                         .padding(.vertical, 6)
                     }

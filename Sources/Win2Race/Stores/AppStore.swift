@@ -132,8 +132,15 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
             .filter { $0.isInstalled && $0.commandPath != nil }
     }
 
+    var runnableInstallations: [CLIInstallation] {
+        autoSelectedInstallations()
+    }
+
     var startButtonTitle: String {
         let count = autoSelectedInstallations().count
+        guard count > 0 else {
+            return "Setup prüfen"
+        }
         return count == 1 ? "1 Agent starten" : "\(count) Agenten starten"
     }
 
@@ -156,10 +163,13 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     }
 
     func refreshSecretStates() {
-        let keys = Array(Set(AgentKind.allCases.flatMap(\.requiredEnvironmentKeys))).sorted()
+        let keys = requiredSecretKeysForSetup()
+        let keySet = Set(keys)
         providerSecretStates = keys.map { key in
             ProviderSecretState(key: key, provider: providerName(for: key), isPresent: KeychainService.read(account: key) != nil)
         }
+        tokenTestResults = tokenTestResults.filter { keySet.contains($0.key) }
+        tokenTestsInFlight = tokenTestsInFlight.intersection(keySet)
     }
 
     func saveSecret(key: String) {
@@ -312,7 +322,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
 
         let selected = autoSelectedInstallations()
         guard !selected.isEmpty else {
-            statusMessage = "Keine unterstützte Coding-CLI gefunden. Öffne Setup und installiere mindestens eine CLI."
+            statusMessage = "Keine startbereite Coding-CLI gefunden. Öffne Setup und mache mindestens einen Agenten grün."
             selectedSection = .setup
             return
         }
@@ -389,7 +399,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     func startAdvancedTask(_ parsed: ParsedTaskFile) {
         let selected = autoSelectedInstallations()
         guard !selected.isEmpty else {
-            statusMessage = "Keine unterstützte Coding-CLI gefunden."
+            statusMessage = "Keine startbereite Coding-CLI gefunden. Öffne Setup und mache mindestens einen Agenten grün."
             selectedSection = .setup
             return
         }
@@ -435,12 +445,14 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
         mutate(&profile)
         agentProfiles[agent] = profile
         refreshRuntimeRecords()
+        refreshSecretStates()
     }
 
     func saveAgentProfiles() {
         do {
             try fileStore.writeAgentProfiles(agentProfiles)
             refreshRuntimeRecords()
+            refreshSecretStates()
             statusMessage = "Agent-Profile gespeichert."
         } catch {
             recordDiagnostic(
@@ -717,10 +729,28 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     }
 
     private func autoSelectedInstallations() -> [CLIInstallation] {
-        let installed = installedInstallations
+        let installed = installedInstallations.filter(installationHasUsableSecrets)
         let native = installed.filter { $0.strategy == .native }
         let wrappers = installed.filter { $0.strategy == .wrapper }
         return Array((native + wrappers).prefix(6))
+    }
+
+    private func requiredSecretKeysForSetup() -> [String] {
+        Array(Set(installedInstallations.flatMap { $0.agent.requiredEnvironmentKeys })).sorted()
+    }
+
+    func hasMisconfiguredRuntime() -> Bool {
+        runtimeRecords.contains { $0.health == .misconfigured }
+    }
+
+    private func installationHasUsableSecrets(_ installation: CLIInstallation) -> Bool {
+        installation.agent.requiredEnvironmentKeys.allSatisfy { key in
+            guard KeychainService.read(account: key)?.trimmed.isEmpty == false,
+                  let result = tokenTestResults[key] else {
+                return false
+            }
+            return result.succeeded && result.budgetLikelyAvailable
+        }
     }
 
     private func resolvedInstallation(_ installation: CLIInstallation) -> CLIInstallation {
@@ -776,9 +806,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
         if key.contains("GEMINI") || key.contains("GOOGLE") { return "Google" }
         if key.contains("GROQ") { return "Groq" }
         if key.contains("DEEPSEEK") { return "DeepSeek" }
-        if key.contains("MOONSHOT") { return "Kimi" }
         if key.contains("OPENROUTER") { return "OpenRouter" }
-        if key.contains("ZAI") { return "Z.ai / GLM" }
         return "Provider"
     }
 

@@ -88,7 +88,7 @@ struct SimpleTaskView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!store.draft.isStartable || store.installedInstallations.isEmpty)
+                        .disabled(!store.draft.isStartable || store.runnableInstallations.isEmpty)
 
                         Button {
                             store.selectedSection = .setup

@@ -119,12 +119,15 @@ final class OrchestratorEngine {
             return
         }
 
-        let taskRoot = URL(fileURLWithPath: task.rootPath, isDirectory: true)
-        let runDirectory = taskRoot.appendingPathComponent(installation.agent.rawValue, isDirectory: true)
-        let workspaceURL = runDirectory.appendingPathComponent("workspace", isDirectory: true)
-        let timestamp = W2RDateFormatter.branchTimestamp.string(from: Date())
-        let branch = "task/\(task.slug)/\(installation.agent.rawValue)/\(timestamp)"
         let runID = UUID()
+        let taskRoot = URL(fileURLWithPath: task.rootPath, isDirectory: true)
+        let timestamp = W2RDateFormatter.branchTimestamp.string(from: Date())
+        let runStamp = "\(timestamp)-\(runID.uuidString.prefix(8))"
+        let runDirectory = taskRoot
+            .appendingPathComponent(installation.agent.rawValue, isDirectory: true)
+            .appendingPathComponent(runStamp, isDirectory: true)
+        let workspaceURL = runDirectory.appendingPathComponent("workspace", isDirectory: true)
+        let branch = "task/\(task.slug)/\(installation.agent.rawValue)/\(runStamp)"
 
         var run = AgentRunRecord(
             id: runID,
