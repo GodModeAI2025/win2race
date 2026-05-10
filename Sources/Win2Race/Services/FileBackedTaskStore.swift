@@ -52,6 +52,7 @@ final class FileBackedTaskStore {
                 try envTemplate(for: agent).write(to: url, atomically: true, encoding: .utf8)
             }
         }
+        try removeLegacyEnvironmentKeys(["DASHSCOPE_API_KEY"], from: [.qwen])
     }
 
     func taskRootURL(slug: String, id: UUID) -> URL {
@@ -525,6 +526,26 @@ final class FileBackedTaskStore {
 
     private func defaultEventsPath(for run: AgentRunRecord) -> String {
         URL(fileURLWithPath: run.runtimePath).deletingLastPathComponent().appendingPathComponent("events.jsonl").path
+    }
+
+    private func removeLegacyEnvironmentKeys(_ keys: [String], from agents: [AgentKind]) throws {
+        let legacyKeys = Set(keys.map { $0.uppercased() })
+        for agent in agents {
+            let url = envFileURL(for: agent)
+            guard fileManager.fileExists(atPath: url.path) else {
+                continue
+            }
+
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let filteredLines = content.components(separatedBy: .newlines).filter { line in
+                let uppercased = line.uppercased()
+                return legacyKeys.contains { uppercased.contains($0) } == false
+            }
+            let filtered = filteredLines.joined(separator: "\n")
+            if filtered != content {
+                try filtered.write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
     }
 
     private func allocatedSize(of url: URL) -> UInt64 {

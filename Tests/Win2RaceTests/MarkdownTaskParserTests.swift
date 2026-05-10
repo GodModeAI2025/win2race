@@ -193,4 +193,118 @@ final class MarkdownTaskParserTests: XCTestCase {
         XCTAssertTrue(directories.contains("/Users/example/.bun/bin"))
         XCTAssertEqual(directories.filter { $0 == "/usr/bin" }.count, 1)
     }
+
+    func testProviderKeyURLsDoNotCrossOpenAnthropicAndOpenAI() {
+        XCTAssertEqual(
+            SetupGuidance.providerKeyURL(for: "ANTHROPIC_API_KEY"),
+            "https://platform.claude.com/settings/keys"
+        )
+        XCTAssertEqual(
+            SetupGuidance.providerKeyURL(for: "OPENAI_API_KEY"),
+            "https://platform.openai.com/api-keys"
+        )
+    }
+
+    func testDashScopeIsNotRequiredForQwen() {
+        XCTAssertEqual(AgentKind.qwen.requiredEnvironmentKeys, ["OPENROUTER_API_KEY"])
+        XCTAssertNil(SetupGuidance.providerKeyURL(for: "DASHSCOPE_API_KEY"))
+    }
+
+    func testDashScopeIsRemovedFromExistingQwenEnv() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = FileBackedTaskStore(rootURL: root)
+        try store.ensureRoot()
+        try """
+        export OPENROUTER_API_KEY=keep
+        export DASHSCOPE_API_KEY=remove
+        # export DASHSCOPE_API_KEY=remove-comment
+        """.write(to: store.envFileURL(for: .qwen), atomically: true, encoding: .utf8)
+
+        try store.ensureRoot()
+
+        let content = try String(contentsOf: store.envFileURL(for: .qwen), encoding: .utf8)
+        XCTAssertTrue(content.contains("OPENROUTER_API_KEY"))
+        XCTAssertFalse(content.contains("DASHSCOPE_API_KEY"))
+    }
+
+    func testProviderTokenTesterBuildsAnthropicBudgetProbe() throws {
+        let plan = try XCTUnwrap(
+            ProviderTokenTester.plan(for: "ANTHROPIC_API_KEY", provider: "Claude/Anthropic", token: "test-token")
+        )
+
+        XCTAssertEqual(plan.url.absoluteString, "https://api.anthropic.com/v1/messages")
+        XCTAssertEqual(plan.headers["x-api-key"], "test-token")
+        XCTAssertEqual(plan.headers["anthropic-version"], "2023-06-01")
+        XCTAssertTrue(plan.budgetProbe)
+    }
+
+    func testProviderTokenTesterUsesOpenRouterKeyMetadataEndpoint() throws {
+        let plan = try XCTUnwrap(
+            ProviderTokenTester.plan(for: "OPENROUTER_API_KEY", provider: "OpenRouter", token: "test-token")
+        )
+
+        XCTAssertEqual(plan.method, "GET")
+        XCTAssertEqual(plan.url.absoluteString, "https://openrouter.ai/api/v1/auth/key")
+        XCTAssertEqual(plan.headers["Authorization"], "Bearer test-token")
+        XCTAssertTrue(plan.budgetProbe)
+    }
+
+    func testProviderTokenTesterEncodesGeminiKeyInURL() throws {
+        let plan = try XCTUnwrap(
+            ProviderTokenTester.plan(for: "GEMINI_API_KEY", provider: "Google", token: "a+b/c")
+        )
+
+        XCTAssertEqual(plan.url.host, "generativelanguage.googleapis.com")
+        let components = try XCTUnwrap(URLComponents(url: plan.url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "key" })?.value, "a+b/c")
+    }
+
+    func testProviderTokenTesterClassifiesQuotaErrors() throws {
+        let plan = try XCTUnwrap(
+            ProviderTokenTester.plan(for: "OPENAI_API_KEY", provider: "OpenAI", token: "test-token")
+        )
+
+        let result = ProviderTokenTester.classify(
+            key: "OPENAI_API_KEY",
+            provider: "OpenAI",
+            plan: plan,
+            statusCode: 429,
+            responseBody: #"{"error":{"code":"insufficient_quota","message":"billing hard limit reached"}}"#
+        )
+
+        XCTAssertFalse(result.succeeded)
+        XCTAssertFalse(result.budgetLikelyAvailable)
+        XCTAssertTrue(result.summary.contains("Budget"))
+    }
+
+    func testProviderTokenTesterSupportsEveryRequiredProviderKey() throws {
+        let keys = Set(AgentKind.allCases.flatMap(\.requiredEnvironmentKeys))
+
+        for key in keys {
+            XCTAssertNotNil(
+                ProviderTokenTester.plan(for: key, provider: "Provider", token: "test-token"),
+                "\(key) needs a token test plan"
+            )
+        }
+    }
+
+    func testProviderTokenTesterDetectsOpenRouterExhaustedLimit() throws {
+        let plan = try XCTUnwrap(
+            ProviderTokenTester.plan(for: "OPENROUTER_API_KEY", provider: "OpenRouter", token: "test-token")
+        )
+
+        let result = ProviderTokenTester.classify(
+            key: "OPENROUTER_API_KEY",
+            provider: "OpenRouter",
+            plan: plan,
+            statusCode: 200,
+            responseBody: #"{"data":{"usage":10,"limit":10}}"#
+        )
+
+        XCTAssertTrue(result.succeeded)
+        XCTAssertFalse(result.budgetLikelyAvailable)
+        XCTAssertTrue(result.summary.contains("Budget"))
+        XCTAssertTrue(result.details.contains("Usage 10.0 von Limit 10.0"))
+    }
 }

@@ -54,6 +54,8 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     @Published var statusMessage: String = "Bereit."
     @Published var advancedFolderPath: String = ""
     @Published var secretDrafts: [String: String] = [:]
+    @Published var tokenTestResults: [String: ProviderTokenTestResult] = [:]
+    @Published var tokenTestsInFlight: Set<String> = []
     @Published var envDrafts: [AgentKind: String] = [:]
     @Published var envValidationMessages: [AgentKind: [String]] = [:]
     @Published var feedbackNotes: [UUID: String] = [:]
@@ -170,8 +172,9 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
         do {
             try KeychainService.save(value, account: key)
             secretDrafts[key] = ""
+            tokenTestResults.removeValue(forKey: key)
             refreshSecretStates()
-            statusMessage = "\(key) gespeichert."
+            statusMessage = "\(key) gespeichert. Jetzt mit „Test“ Auth und Budget prüfen."
         } catch {
             recordDiagnostic(
                 severity: .error,
@@ -181,6 +184,54 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
                 details: String(describing: error)
             )
             statusMessage = "\(key) konnte nicht gespeichert werden: \(error.localizedDescription)"
+        }
+    }
+
+    func testSecret(key: String, provider: String) {
+        guard tokenTestsInFlight.contains(key) == false else {
+            statusMessage = "\(key) wird bereits getestet."
+            return
+        }
+
+        guard let token = KeychainService.read(account: key), !token.trimmed.isEmpty else {
+            let result = ProviderTokenTestResult(
+                key: key,
+                provider: provider,
+                checkedAt: Date(),
+                succeeded: false,
+                budgetLikelyAvailable: false,
+                statusCode: nil,
+                summary: "\(key) ist noch nicht gespeichert.",
+                details: "Speichere zuerst den Key im macOS Keychain und starte danach den Test."
+            )
+            tokenTestResults[key] = result
+            statusMessage = result.summary
+            return
+        }
+
+        tokenTestsInFlight.insert(key)
+        statusMessage = "Teste \(provider)-Key \(key) ..."
+
+        Task {
+            let result = await ProviderTokenTester.test(key: key, provider: provider, token: token)
+            await MainActor.run {
+                tokenTestsInFlight.remove(key)
+                guard KeychainService.read(account: key) == token else {
+                    statusMessage = "\(key) wurde während des Tests geändert; altes Testergebnis verworfen."
+                    return
+                }
+                tokenTestResults[key] = result
+                statusMessage = result.summary
+                if !result.succeeded || !result.budgetLikelyAvailable {
+                    recordDiagnostic(
+                        severity: result.succeeded ? .warning : .error,
+                        title: "\(provider)-Key-Test nicht grün",
+                        message: result.summary,
+                        context: "AppStore.testSecret",
+                        details: result.copyText
+                    )
+                }
+            }
         }
     }
 
@@ -647,7 +698,22 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
             return
         }
         NSWorkspace.shared.open(url)
-        statusMessage = "\(label) geöffnet."
+        statusMessage = "\(label) geöffnet: \(url.absoluteString)"
+    }
+
+    func openProviderKeyURL(for key: String, provider: String) {
+        guard let urlString = SetupGuidance.providerKeyURL(for: key) else {
+            recordDiagnostic(
+                severity: .error,
+                title: "Provider-Key-Seite unbekannt",
+                message: "Für \(key) ist keine Provider-Key-Seite hinterlegt.",
+                context: "AppStore.openProviderKeyURL",
+                details: key
+            )
+            statusMessage = "Keine Key-Seite für \(key) hinterlegt."
+            return
+        }
+        openExternalURL(urlString, label: "\(provider)-Key-Seite für \(key)")
     }
 
     private func autoSelectedInstallations() -> [CLIInstallation] {
@@ -705,12 +771,11 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     }
 
     private func providerName(for key: String) -> String {
-        if key.contains("ANTHROPIC") { return "Anthropic" }
+        if key.contains("ANTHROPIC") { return "Claude/Anthropic" }
         if key.contains("OPENAI") { return "OpenAI" }
         if key.contains("GEMINI") || key.contains("GOOGLE") { return "Google" }
         if key.contains("GROQ") { return "Groq" }
         if key.contains("DEEPSEEK") { return "DeepSeek" }
-        if key.contains("DASHSCOPE") { return "Qwen" }
         if key.contains("MOONSHOT") { return "Kimi" }
         if key.contains("OPENROUTER") { return "OpenRouter" }
         if key.contains("ZAI") { return "Z.ai / GLM" }

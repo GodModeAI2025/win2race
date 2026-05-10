@@ -111,3 +111,32 @@ struct WorkspaceCleanupReport: Hashable {
         return "\(removedItems) Artefakte entfernt, \(formatted) freigegeben, \(errors.count) Fehler."
     }
 }
+
+struct ProviderTokenTestResult: Identifiable, Codable, Hashable {
+    var id: String { key }
+    var key: String
+    var provider: String
+    var checkedAt: Date
+    var succeeded: Bool
+    var budgetLikelyAvailable: Bool
+    var statusCode: Int?
+    var summary: String
+    var details: String
+
+    var copyText: String {
+        """
+        Provider token test
+        Key: \(key)
+        Provider: \(provider)
+        Checked: \(W2RDateFormatter.displayDateTime.string(from: checkedAt))
+        HTTP: \(statusCode.map(String.init) ?? "n/a")
+        Success: \(succeeded)
+        Budget likely available: \(budgetLikelyAvailable)
+
+        \(summary)
+
+        Details:
+        \(details.trimmed.isEmpty ? "n/a" : details)
+        """
+    }
+}

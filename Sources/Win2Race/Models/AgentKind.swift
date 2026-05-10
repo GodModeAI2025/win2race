@@ -79,7 +79,7 @@ enum AgentKind: String, CaseIterable, Codable, Hashable, Identifiable {
         case .gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
         case .openAI: ["OPENAI_API_KEY"]
         case .deepSeek: ["DEEPSEEK_API_KEY"]
-        case .qwen: ["OPENROUTER_API_KEY", "DASHSCOPE_API_KEY"]
+        case .qwen: ["OPENROUTER_API_KEY"]
         case .kimi: ["OPENROUTER_API_KEY", "MOONSHOT_API_KEY"]
         case .groq: ["GROQ_API_KEY"]
         case .glm: ["OPENROUTER_API_KEY", "ZAI_API_KEY"]

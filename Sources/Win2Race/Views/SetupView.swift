@@ -158,7 +158,13 @@ struct SetupView: View {
                     .textSelection(.enabled)
 
                 HStack(spacing: 8) {
-                    if let url = item.url {
+                    if let providerKey = item.providerKey {
+                        Button {
+                            store.openProviderKeyURL(for: providerKey, provider: item.providerName ?? "Provider")
+                        } label: {
+                            Label(item.urlButtonTitle, systemImage: "safari")
+                        }
+                    } else if let url = item.url {
                         Button {
                             store.openExternalURL(url, label: item.urlButtonTitle)
                         } label: {
@@ -180,6 +186,16 @@ struct SetupView: View {
                         } label: {
                             Label("Key-Feld markieren", systemImage: "key")
                         }
+                    }
+
+                    if let testKey = item.testKey,
+                       let state = store.providerSecretStates.first(where: { $0.key == testKey }) {
+                        Button {
+                            store.testSecret(key: testKey, provider: state.provider)
+                        } label: {
+                            Label(store.tokenTestsInFlight.contains(testKey) ? "Teste" : "Test starten", systemImage: "checkmark.shield")
+                        }
+                        .disabled(!state.isPresent || store.tokenTestsInFlight.contains(testKey))
                     }
 
                     if let agent = item.focusAgent {
@@ -264,6 +280,23 @@ struct SetupView: View {
                     )
                     .textFieldStyle(.roundedBorder)
 
+                    if SetupGuidance.providerKeyURL(for: state.key) != nil {
+                        Button {
+                            store.openProviderKeyURL(for: state.key, provider: state.provider)
+                        } label: {
+                            Label("Key-Seite", systemImage: "safari")
+                        }
+                        .help("\(state.provider)-Key-Seite öffnen")
+                    }
+
+                    Button {
+                        store.testSecret(key: state.key, provider: state.provider)
+                    } label: {
+                        Label(store.tokenTestsInFlight.contains(state.key) ? "Teste" : "Test", systemImage: "checkmark.shield")
+                    }
+                    .disabled(!state.isPresent || store.tokenTestsInFlight.contains(state.key))
+                    .help("Gespeicherten Key mit einer minimalen Provider-Anfrage testen. Das kann je nach Provider minimal Budget verbrauchen.")
+
                     Button {
                         store.saveSecret(key: state.key)
                     } label: {
@@ -273,9 +306,9 @@ struct SetupView: View {
                     .help(state.isPresent ? "Neuen Wert einfügen, um den gespeicherten Key zu ersetzen" : "Key einfügen, um diesen Eintrag grün zu machen")
 
                     ReadinessBadge(
-                        isGreen: state.isPresent,
+                        isGreen: keyIsGreen(state),
                         greenText: "grün",
-                        actionText: "Key fehlt"
+                        actionText: keyBadgeText(for: state)
                     )
                 }
                 .padding(.vertical, focusedKey == state.key ? 6 : 0)
@@ -285,9 +318,35 @@ struct SetupView: View {
 
                 Text(keyActionText(for: state))
                     .font(.caption)
-                    .foregroundStyle(state.isPresent ? .green : .orange)
+                    .foregroundStyle(keyActionColor(for: state))
                     .padding(.leading, 200)
                     .lineLimit(2)
+
+                if let result = store.tokenTestResults[state.key] {
+                    let resultIsGreen = result.succeeded && result.budgetLikelyAvailable
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: resultIsGreen ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(resultIsGreen ? .green : .orange)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(result.summary)
+                                .font(.caption)
+                                .foregroundStyle(resultIsGreen ? .green : .orange)
+                                .textSelection(.enabled)
+                            Text("HTTP \(result.statusCode.map(String.init) ?? "n/a") · \(W2RDateFormatter.displayDateTime.string(from: result.checkedAt))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Spacer()
+                        Button {
+                            store.copyText(result.copyText, label: "\(state.key)-Testergebnis")
+                        } label: {
+                            Label("Kopieren", systemImage: "doc.on.doc")
+                        }
+                        .font(.caption)
+                    }
+                    .padding(.leading, 200)
+                }
             }
         }
     }
@@ -535,17 +594,17 @@ struct SetupView: View {
 
     private var setupIsGreen: Bool {
         store.installations.contains(where: \.isInstalled) &&
-        store.providerSecretStates.allSatisfy(\.isPresent) &&
+        store.providerSecretStates.allSatisfy { keyIsGreen($0) } &&
         AgentKind.allCases.allSatisfy { envIsGreen($0) }
     }
 
     private var readinessSubtitle: String {
         if setupIsGreen {
-            return "Mindestens eine Coding-CLI ist verfügbar und alle bekannten Provider-Keys sind gespeichert."
+            return "Mindestens eine Coding-CLI ist verfügbar und alle bekannten Provider-Keys sind gespeichert und getestet."
         }
 
         let missingCLI = store.installations.filter { !$0.isInstalled }.count
-        let missingKeys = store.providerSecretStates.filter { !$0.isPresent }.count
+        let keyIssues = store.providerSecretStates.filter { !keyIsGreen($0) }.count
         let envIssues = AgentKind.allCases.filter { !envIsGreen($0) }.count
         var parts: [String] = []
         if store.installations.contains(where: \.isInstalled) == false {
@@ -554,8 +613,8 @@ struct SetupView: View {
         if missingCLI > 0 {
             parts.append("\(missingCLI) optionale CLI-Einträge prüfen")
         }
-        if missingKeys > 0 {
-            parts.append("\(missingKeys) API-Key\(missingKeys == 1 ? "" : "s") speichern")
+        if keyIssues > 0 {
+            parts.append("\(keyIssues) API-Key\(keyIssues == 1 ? "" : "s") speichern oder testen")
         }
         if envIssues > 0 {
             parts.append("\(envIssues) ENV-Datei\(envIssues == 1 ? "" : "en") korrigieren")
@@ -596,17 +655,20 @@ struct SetupView: View {
             )
         }
 
-        let missingKeys = store.providerSecretStates.filter { !$0.isPresent }
-        if let firstMissingKey = missingKeys.first {
+        let keyIssues = store.providerSecretStates.filter { !keyIsGreen($0) }
+        if let firstKeyIssue = keyIssues.first {
+            let needsValue = !firstKeyIssue.isPresent
             items.append(
                 SetupActionItem(
-                    systemImage: "key",
+                    systemImage: needsValue ? "key" : "checkmark.shield",
                     color: .orange,
-                    title: "\(firstMissingKey.key) speichern",
-                    detail: keyActionText(for: firstMissingKey),
-                    url: providerKeyURL(for: firstMissingKey.key),
-                    urlButtonTitle: "Key-Seite öffnen",
-                    focusKey: firstMissingKey.key
+                    title: needsValue ? "\(firstKeyIssue.key) speichern" : "\(firstKeyIssue.key) testen",
+                    detail: keyActionText(for: firstKeyIssue),
+                    providerKey: firstKeyIssue.key,
+                    providerName: firstKeyIssue.provider,
+                    urlButtonTitle: "\(firstKeyIssue.provider)-Key öffnen",
+                    focusKey: firstKeyIssue.key,
+                    testKey: needsValue ? nil : firstKeyIssue.key
                 )
             )
         }
@@ -624,7 +686,7 @@ struct SetupView: View {
             )
         }
 
-        if missingInstallations.count > 1 || missingKeys.count > 1 || AgentKind.allCases.filter({ !envIsGreen($0) }).count > 1 {
+        if missingInstallations.count > 1 || keyIssues.count > 1 || AgentKind.allCases.filter({ !envIsGreen($0) }).count > 1 {
             items.append(
                 SetupActionItem(
                     systemImage: "list.bullet.clipboard",
@@ -661,10 +723,41 @@ struct SetupView: View {
     }
 
     private func keyActionText(for state: ProviderSecretState) -> String {
-        if state.isPresent {
-            return "Gespeichert: \(state.key) wird beim CLI-Start als ENV gesetzt."
+        guard state.isPresent else {
+            return "\(state.key) auf der Provider-Key-Seite erzeugen, hier im Feld \(state.key) einfügen und „Speichern“ klicken. Danach mit „Test“ Auth und Budget prüfen."
         }
-        return "\(state.key) auf der Provider-Key-Seite erzeugen, hier im Feld \(state.key) einfügen und „Speichern“ klicken. Danach wird dieser Eintrag grün."
+
+        guard let result = store.tokenTestResults[state.key] else {
+            return "Gespeichert: Klicke „Test“, um Authentifizierung und Budget/Quota zu prüfen. Erst danach ist dieser Eintrag grün."
+        }
+
+        if result.succeeded && result.budgetLikelyAvailable {
+            return "Grün: \(state.key) ist gespeichert, der Provider akzeptiert den Key und Budget/Quota ist wahrscheinlich nutzbar."
+        }
+
+        return "Nicht grün: \(result.summary) Ergebnis kopieren, Key/Budget beim Provider korrigieren, neu speichern und erneut testen."
+    }
+
+    private func keyIsGreen(_ state: ProviderSecretState) -> Bool {
+        guard state.isPresent,
+              let result = store.tokenTestResults[state.key] else {
+            return false
+        }
+        return result.succeeded && result.budgetLikelyAvailable
+    }
+
+    private func keyBadgeText(for state: ProviderSecretState) -> String {
+        guard state.isPresent else {
+            return "Key fehlt"
+        }
+        guard let result = store.tokenTestResults[state.key] else {
+            return "Test offen"
+        }
+        return result.succeeded && result.budgetLikelyAvailable ? "grün" : "Test fehlgeschlagen"
+    }
+
+    private func keyActionColor(for state: ProviderSecretState) -> Color {
+        keyIsGreen(state) ? .green : .orange
     }
 
     private func cliInstallCommand(for agent: AgentKind) -> String? {
@@ -695,19 +788,6 @@ struct SetupView: View {
         case .openCode:
             return "https://opencode.ai/docs/"
         }
-    }
-
-    private func providerKeyURL(for key: String) -> String? {
-        if key.contains("ANTHROPIC") { return "https://console.anthropic.com/settings/keys" }
-        if key.contains("OPENAI") { return "https://platform.openai.com/api-keys" }
-        if key.contains("GEMINI") || key.contains("GOOGLE") { return "https://aistudio.google.com/app/apikey" }
-        if key.contains("GROQ") { return "https://console.groq.com/keys" }
-        if key.contains("DEEPSEEK") { return "https://platform.deepseek.com/api_keys" }
-        if key.contains("OPENROUTER") { return "https://openrouter.ai/settings/keys" }
-        if key.contains("DASHSCOPE") { return "https://dashscope.console.aliyun.com/apiKey" }
-        if key.contains("MOONSHOT") { return "https://platform.moonshot.ai/console/api-keys" }
-        if key.contains("ZAI") { return "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys" }
-        return nil
     }
 
     private func envIsGreen(_ agent: AgentKind) -> Bool {
@@ -750,9 +830,12 @@ private struct SetupActionItem: Identifiable {
     let title: String
     let detail: String
     var url: String? = nil
+    var providerKey: String? = nil
+    var providerName: String? = nil
     var urlButtonTitle: String = "Öffnen"
     var command: String? = nil
     var focusKey: String? = nil
+    var testKey: String? = nil
     var focusAgent: AgentKind? = nil
 }
 
