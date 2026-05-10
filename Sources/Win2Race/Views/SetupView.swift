@@ -3,6 +3,8 @@ import SwiftUI
 struct SetupView: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedEnvAgent: AgentKind = .claude
+    @State private var selectedProfileAgent: AgentKind = .claude
+    @State private var focusedKey: String?
 
     var body: some View {
         ScrollView {
@@ -18,12 +20,94 @@ struct SetupView: View {
                 }
 
                 readinessSection
+                workspaceSection
+                runtimeSection
                 cliSection
                 keySection
                 envSection
+                profileSection
             }
             .padding(24)
             .frame(maxWidth: 980, alignment: .leading)
+        }
+    }
+
+    private var workspaceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader("Arbeitsverzeichnis", subtitle: "Root fuer Tasks, Agent-Workspaces, Logs, ADRs, ENV und Diagnostics.")
+
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "externaldrive")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(store.fileStore.rootURL.path)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                    Text("Cleanup entfernt nur regenerierbare Artefakte wie `node_modules`, `.next`, `.turbo`, `.build` und `DerivedData`; `.git`, Logs, ADRs und Resultate bleiben erhalten.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button {
+                    store.reveal(path: store.fileStore.rootURL.path)
+                } label: {
+                    Label("Im Finder", systemImage: "folder")
+                }
+
+                Button {
+                    store.cleanupWorkspaceArtifacts()
+                } label: {
+                    Label("Cleanup", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private var runtimeSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader("Runtimes", subtitle: "Erkannte lokale Agent-Runtimes mit Profil-Overrides und Capabilities.")
+
+            ForEach(store.runtimeRecords) { runtime in
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: runtime.agent.systemImage)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(runtime.agent.displayName)
+                                .font(.headline)
+                            Text(runtime.strategy.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(runtime.commandPath ?? runtime.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(runtime.capabilities.joined(separator: " · "))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    ReadinessBadge(
+                        isGreen: runtime.health == .ready,
+                        greenText: "runtime grün",
+                        actionText: runtime.health.label
+                    )
+                }
+                .padding(.vertical, 6)
+            }
         }
     }
 
@@ -46,22 +130,9 @@ struct SetupView: View {
             }
 
             if !setupIsGreen {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     ForEach(setupActionItems) { item in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: item.systemImage)
-                                .foregroundStyle(item.color)
-                                .frame(width: 18)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title)
-                                    .font(.callout.weight(.semibold))
-                                Text(item.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        }
+                        setupActionRow(item)
                     }
                 }
                 .padding(.top, 2)
@@ -70,6 +141,59 @@ struct SetupView: View {
         .padding(14)
         .background((setupIsGreen ? Color.green : Color.orange).opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func setupActionRow(_ item: SetupActionItem) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.systemImage)
+                .foregroundStyle(item.color)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.title)
+                    .font(.callout.weight(.semibold))
+                Text(item.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                HStack(spacing: 8) {
+                    if let url = item.url {
+                        Button {
+                            store.openExternalURL(url, label: item.urlButtonTitle)
+                        } label: {
+                            Label(item.urlButtonTitle, systemImage: "safari")
+                        }
+                    }
+
+                    if let command = item.command {
+                        Button {
+                            store.copyText(command, label: "Install-Befehl")
+                        } label: {
+                            Label("Befehl kopieren", systemImage: "doc.on.doc")
+                        }
+                    }
+
+                    if let key = item.focusKey {
+                        Button {
+                            focusedKey = key
+                        } label: {
+                            Label("Key-Feld markieren", systemImage: "key")
+                        }
+                    }
+
+                    if let agent = item.focusAgent {
+                        Button {
+                            selectedEnvAgent = agent
+                            selectedProfileAgent = agent
+                        } label: {
+                            Label("Agent anzeigen", systemImage: "scope")
+                        }
+                    }
+                }
+                .font(.caption)
+            }
+        }
     }
 
     private var cliSection: some View {
@@ -154,6 +278,10 @@ struct SetupView: View {
                         actionText: "Key fehlt"
                     )
                 }
+                .padding(.vertical, focusedKey == state.key ? 6 : 0)
+                .padding(.horizontal, focusedKey == state.key ? 8 : 0)
+                .background(focusedKey == state.key ? Color.orange.opacity(0.12) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 Text(keyActionText(for: state))
                     .font(.caption)
@@ -269,6 +397,114 @@ struct SetupView: View {
         }
     }
 
+    private var profileSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader("Agent-Profile", subtitle: "CLI-Pfad, Modell, Extra-Argumente, Timeout und Git-Identität pro Agent.")
+
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(AgentKind.allCases) { agent in
+                        Button {
+                            selectedProfileAgent = agent
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: agent.systemImage)
+                                    .frame(width: 18)
+                                Text(agent.displayName)
+                                    .lineLimit(1)
+                                Spacer()
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(selectedProfileAgent == agent ? Color.accentColor.opacity(0.14) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                .frame(width: 210)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(selectedProfileAgent.displayName)
+                        .font(.headline)
+
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 8) {
+                        GridRow {
+                            Text("CLI Override").foregroundStyle(.secondary)
+                            TextField("Optionaler absoluter Pfad zur CLI", text: profileBinding(\.commandPathOverride))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        GridRow {
+                            Text("Modell").foregroundStyle(.secondary)
+                            TextField("Optionales Modell-Override", text: profileBinding(\.modelOverride))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        GridRow {
+                            Text("Extra Args").foregroundStyle(.secondary)
+                            TextField("--flag value --quoted \"two words\"", text: profileBinding(\.extraArguments))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        GridRow {
+                            Text("SSH Key").foregroundStyle(.secondary)
+                            TextField("Optional: ~/.ssh/agents/claude/id_ed25519", text: profileBinding(\.sshIdentityPath))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        GridRow {
+                            Text("Git Name").foregroundStyle(.secondary)
+                            TextField("Optionaler Commit-Name", text: profileBinding(\.gitUserName))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        GridRow {
+                            Text("Git Email").foregroundStyle(.secondary)
+                            TextField("Optionale Commit-Mail", text: profileBinding(\.gitUserEmail))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        GridRow {
+                            Text("Timeout").foregroundStyle(.secondary)
+                            Stepper(
+                                "\(store.profile(for: selectedProfileAgent).timeoutSeconds) Sekunden",
+                                value: timeoutBinding,
+                                in: 300...86_400,
+                                step: 300
+                            )
+                        }
+                    }
+                    .font(.callout)
+
+                    Text("Extra-Argumente werden shell-kompatibel geparst. Der SSH-Key setzt `GIT_SSH_COMMAND` beim Clone und danach `core.sshCommand` im Worktree.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack {
+                        Button {
+                            store.saveAgentProfiles()
+                        } label: {
+                            Label("Speichern", systemImage: "square.and.arrow.down")
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            store.resetAgentProfile(for: selectedProfileAgent)
+                        } label: {
+                            Label("Zurücksetzen", systemImage: "arrow.counterclockwise")
+                        }
+
+                        Spacer()
+
+                        Button {
+                            store.revealAgentProfilesFile()
+                        } label: {
+                            Label("Datei", systemImage: "doc")
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     @ViewBuilder
     private func envValidationView(for agent: AgentKind) -> some View {
         let messages = store.envValidationMessages[agent, default: []]
@@ -336,7 +572,10 @@ struct SetupView: View {
                     systemImage: "terminal",
                     color: .orange,
                     title: "Mindestens eine Coding-CLI installieren",
-                    detail: "Installiere `claude`, `codex`, `gemini`, `opencode` oder `aider`, stelle sicher, dass der Befehl im PATH liegt, und klicke danach auf „Neu prüfen“."
+                    detail: "Installiere mindestens eine CLI. Empfehlung: Claude oder OpenAI Codex, danach Terminal neu öffnen und in W2R „Neu prüfen“ klicken.",
+                    url: "https://help.openai.com/en/articles/11096431",
+                    urlButtonTitle: "Codex laden",
+                    command: "npm install -g @openai/codex"
                 )
             )
         }
@@ -348,7 +587,11 @@ struct SetupView: View {
                     systemImage: firstMissing.agent.systemImage,
                     color: .orange,
                     title: "\(firstMissing.agent.displayName) grün machen",
-                    detail: cliActionText(for: firstMissing)
+                    detail: cliActionText(for: firstMissing),
+                    url: cliInstallURL(for: firstMissing.agent),
+                    urlButtonTitle: "Download öffnen",
+                    command: cliInstallCommand(for: firstMissing.agent),
+                    focusAgent: firstMissing.agent
                 )
             )
         }
@@ -360,7 +603,10 @@ struct SetupView: View {
                     systemImage: "key",
                     color: .orange,
                     title: "\(firstMissingKey.key) speichern",
-                    detail: keyActionText(for: firstMissingKey)
+                    detail: keyActionText(for: firstMissingKey),
+                    url: providerKeyURL(for: firstMissingKey.key),
+                    urlButtonTitle: "Key-Seite öffnen",
+                    focusKey: firstMissingKey.key
                 )
             )
         }
@@ -372,7 +618,8 @@ struct SetupView: View {
                     systemImage: "slider.horizontal.3",
                     color: .orange,
                     title: "\(firstBrokenEnv.displayName)-ENV korrigieren",
-                    detail: firstMessage
+                    detail: "\(firstMessage) Wähle unten im ENV-Editor \(firstBrokenEnv.displayName), korrigiere die Zeile und klicke „Speichern“.",
+                    focusAgent: firstBrokenEnv
                 )
             )
         }
@@ -383,7 +630,7 @@ struct SetupView: View {
                     systemImage: "list.bullet.clipboard",
                     color: .secondary,
                     title: "Weitere offene Punkte",
-                    detail: "Alle grauen oder orangenen Zeilen darunter zeigen direkt unter dem Namen die konkrete Aktion, die den Eintrag grün macht."
+                    detail: "Die Übersicht zeigt immer den nächsten konkreten Schritt. Für weitere CLIs oder Keys: unten in Coding-CLIs und API Keys stehen dieselben Hinweise je Zeile."
                 )
             )
         }
@@ -399,17 +646,17 @@ struct SetupView: View {
         let commands = installation.agent.preferredCommands.map { "`\($0)`" }.joined(separator: " oder ")
         switch installation.agent {
         case .claude:
-            return "Claude Code installieren, sodass \(commands) im PATH liegt. Danach „Neu prüfen“ klicken."
+            return "Lade Claude Code von Anthropic oder kopiere den Install-Befehl. Danach ein neues Terminal öffnen, prüfen dass \(commands) im PATH liegt, und „Neu prüfen“ klicken."
         case .gemini:
-            return "Gemini CLI installieren, sodass \(commands) im PATH liegt. Danach „Neu prüfen“ klicken."
+            return "Lade Gemini CLI von Google oder kopiere den npm/brew-Befehl. Danach ein neues Terminal öffnen, prüfen dass \(commands) im PATH liegt, und „Neu prüfen“ klicken."
         case .openAI:
-            return "OpenAI/Codex CLI installieren, sodass \(commands) im PATH liegt. Danach „Neu prüfen“ klicken."
+            return "Lade OpenAI Codex CLI oder kopiere den npm-Befehl. Danach ein neues Terminal öffnen, prüfen dass \(commands) im PATH liegt, und „Neu prüfen“ klicken."
         case .deepSeek, .qwen, .kimi, .groq, .glm:
-            return "Wrapper `aider` installieren und den passenden Provider-Key speichern. Danach „Neu prüfen“ klicken."
+            return "Diese Provider laufen in W2R über `aider`: installiere aider, speichere den passenden Provider-Key und klicke „Neu prüfen“."
         case .aider:
-            return "aider installieren, sodass \(commands) im PATH liegt. Danach „Neu prüfen“ klicken."
+            return "Installiere aider mit dem offiziellen Installer, sodass \(commands) im PATH liegt. Danach „Neu prüfen“ klicken."
         case .openCode:
-            return "OpenCode installieren, sodass \(commands) im PATH liegt. Danach „Neu prüfen“ klicken."
+            return "Installiere OpenCode mit dem offiziellen Installer, sodass \(commands) im PATH liegt. Danach „Neu prüfen“ klicken."
         }
     }
 
@@ -417,11 +664,76 @@ struct SetupView: View {
         if state.isPresent {
             return "Gespeichert: \(state.key) wird beim CLI-Start als ENV gesetzt."
         }
-        return "\(state.key) oben einfügen und „Speichern“ klicken. Danach wird dieser Eintrag grün."
+        return "\(state.key) auf der Provider-Key-Seite erzeugen, hier im Feld \(state.key) einfügen und „Speichern“ klicken. Danach wird dieser Eintrag grün."
+    }
+
+    private func cliInstallCommand(for agent: AgentKind) -> String? {
+        switch agent {
+        case .claude:
+            return "curl -fsSL https://claude.ai/install.sh | bash"
+        case .gemini:
+            return "npm install -g @google/gemini-cli"
+        case .openAI:
+            return "npm install -g @openai/codex"
+        case .deepSeek, .qwen, .kimi, .groq, .glm, .aider:
+            return "curl -LsSf https://aider.chat/install.sh | sh"
+        case .openCode:
+            return "curl -fsSL https://opencode.ai/install | bash"
+        }
+    }
+
+    private func cliInstallURL(for agent: AgentKind) -> String? {
+        switch agent {
+        case .claude:
+            return "https://support.claude.com/en/articles/14552646-troubleshoot-claude-code-installation-and-authentication"
+        case .gemini:
+            return "https://github.com/google-gemini/gemini-cli"
+        case .openAI:
+            return "https://help.openai.com/en/articles/11096431"
+        case .deepSeek, .qwen, .kimi, .groq, .glm, .aider:
+            return "https://aider.chat/docs/install.html"
+        case .openCode:
+            return "https://opencode.ai/docs/"
+        }
+    }
+
+    private func providerKeyURL(for key: String) -> String? {
+        if key.contains("ANTHROPIC") { return "https://console.anthropic.com/settings/keys" }
+        if key.contains("OPENAI") { return "https://platform.openai.com/api-keys" }
+        if key.contains("GEMINI") || key.contains("GOOGLE") { return "https://aistudio.google.com/app/apikey" }
+        if key.contains("GROQ") { return "https://console.groq.com/keys" }
+        if key.contains("DEEPSEEK") { return "https://platform.deepseek.com/api_keys" }
+        if key.contains("OPENROUTER") { return "https://openrouter.ai/settings/keys" }
+        if key.contains("DASHSCOPE") { return "https://dashscope.console.aliyun.com/apiKey" }
+        if key.contains("MOONSHOT") { return "https://platform.moonshot.ai/console/api-keys" }
+        if key.contains("ZAI") { return "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys" }
+        return nil
     }
 
     private func envIsGreen(_ agent: AgentKind) -> Bool {
         store.envValidationMessages[agent, default: []].isEmpty
+    }
+
+    private func profileBinding(_ keyPath: WritableKeyPath<AgentProfile, String>) -> Binding<String> {
+        Binding(
+            get: { store.profile(for: selectedProfileAgent)[keyPath: keyPath] },
+            set: { value in
+                store.updateAgentProfile(for: selectedProfileAgent) { profile in
+                    profile[keyPath: keyPath] = value
+                }
+            }
+        )
+    }
+
+    private var timeoutBinding: Binding<Int> {
+        Binding(
+            get: { store.profile(for: selectedProfileAgent).timeoutSeconds },
+            set: { value in
+                store.updateAgentProfile(for: selectedProfileAgent) { profile in
+                    profile.timeoutSeconds = value
+                }
+            }
+        )
     }
 }
 
@@ -437,6 +749,11 @@ private struct SetupActionItem: Identifiable {
     let color: Color
     let title: String
     let detail: String
+    var url: String? = nil
+    var urlButtonTitle: String = "Öffnen"
+    var command: String? = nil
+    var focusKey: String? = nil
+    var focusAgent: AgentKind? = nil
 }
 
 private struct ReadinessBadge: View {

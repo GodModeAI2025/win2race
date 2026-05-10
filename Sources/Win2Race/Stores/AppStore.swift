@@ -41,7 +41,10 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     @Published var tasks: [W2RTask] = []
     @Published var runsByTaskID: [UUID: [AgentRunRecord]] = [:]
     @Published var logsByRunID: [UUID: [String]] = [:]
+    @Published var runEventsByRunID: [UUID: [RunEvent]] = [:]
     @Published var installations: [CLIInstallation] = []
+    @Published var runtimeRecords: [RuntimeRecord] = []
+    @Published var agentProfiles: [AgentKind: AgentProfile] = [:]
     @Published var providerSecretStates: [ProviderSecretState] = []
     @Published var learningRows: [LearningSummaryRow] = []
     @Published var draft = TaskDraft()
@@ -69,12 +72,18 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     func bootstrap() async {
         do {
             try fileStore.ensureRoot()
+            tasks = []
+            runsByTaskID = [:]
+            logsByRunID = [:]
+            runEventsByRunID = [:]
+            agentProfiles = fileStore.loadAgentProfiles()
             tasks = try fileStore.loadTasksReportingDiagnostics()
             for task in tasks {
                 let runs = try fileStore.loadRunsReportingDiagnostics(for: task)
                 runsByTaskID[task.id] = runs
                 for run in runs {
                     logsByRunID[run.id] = loadLog(run: run)
+                    runEventsByRunID[run.id] = fileStore.loadRunEvents(for: run)
                 }
             }
             selectedTaskID = tasks.first?.id
@@ -116,7 +125,9 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
     }
 
     var installedInstallations: [CLIInstallation] {
-        installations.filter { $0.isInstalled && $0.commandPath != nil }
+        installations
+            .map(resolvedInstallation)
+            .filter { $0.isInstalled && $0.commandPath != nil }
     }
 
     var startButtonTitle: String {
@@ -126,6 +137,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
 
     func refreshTooling() {
         installations = CLIDetector.detect()
+        refreshRuntimeRecords()
     }
 
     func refreshSetupState() {
@@ -133,7 +145,12 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
         refreshSecretStates()
         reloadEnvironmentDrafts()
         diagnostics = fileStore.loadDiagnostics()
+        refreshRuntimeRecords()
         statusMessage = "Setup neu geprüft."
+    }
+
+    func refreshRuntimeRecords() {
+        runtimeRecords = RuntimeRegistry.records(installations: installations, profiles: agentProfiles)
     }
 
     func refreshSecretStates() {
@@ -256,7 +273,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
             selectedRunID = nil
             selectedSection = .dashboard
             statusMessage = "Starte \(selected.count) Agenten für \(task.title)."
-            orchestrator.start(task: task, installations: selected, secrets: secretValues())
+            orchestrator.start(task: task, installations: selected, secrets: secretValues(), profiles: agentProfiles)
             draft = TaskDraft()
         } catch {
             recordDiagnostic(
@@ -333,7 +350,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
             selectedRunID = nil
             selectedSection = .dashboard
             statusMessage = "Advanced-Task gestartet: \(task.title)"
-            orchestrator.start(task: task, installations: selected, secrets: secretValues())
+            orchestrator.start(task: task, installations: selected, secrets: secretValues(), profiles: agentProfiles)
         } catch {
             recordDiagnostic(
                 severity: .error,
@@ -356,6 +373,61 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
 
     func cancel(run: AgentRunRecord) {
         orchestrator.cancel(runID: run.id)
+    }
+
+    func profile(for agent: AgentKind) -> AgentProfile {
+        agentProfiles[agent] ?? .default(for: agent)
+    }
+
+    func updateAgentProfile(for agent: AgentKind, mutate: (inout AgentProfile) -> Void) {
+        var profile = self.profile(for: agent)
+        mutate(&profile)
+        agentProfiles[agent] = profile
+        refreshRuntimeRecords()
+    }
+
+    func saveAgentProfiles() {
+        do {
+            try fileStore.writeAgentProfiles(agentProfiles)
+            refreshRuntimeRecords()
+            statusMessage = "Agent-Profile gespeichert."
+        } catch {
+            recordDiagnostic(
+                severity: .error,
+                title: "Agent-Profile konnten nicht gespeichert werden",
+                message: error.localizedDescription,
+                context: "AppStore.saveAgentProfiles",
+                details: String(describing: error),
+                filePath: fileStore.agentProfilesURL.path
+            )
+            statusMessage = "Agent-Profile konnten nicht gespeichert werden: \(error.localizedDescription)"
+        }
+    }
+
+    func resetAgentProfile(for agent: AgentKind) {
+        agentProfiles[agent] = .default(for: agent)
+        saveAgentProfiles()
+    }
+
+    func cleanupWorkspaceArtifacts() {
+        let activeRuns = runsByTaskID.values.flatMap { $0 }.filter { !$0.status.isTerminal }
+        guard activeRuns.isEmpty else {
+            statusMessage = "Cleanup blockiert: \(activeRuns.count) Agent-Run\(activeRuns.count == 1 ? "" : "s") laufen noch."
+            return
+        }
+
+        let report = fileStore.cleanupArtifacts()
+        statusMessage = report.summary
+        if !report.errors.isEmpty {
+            recordDiagnostic(
+                severity: .warning,
+                title: "Workspace-Cleanup teilweise fehlgeschlagen",
+                message: report.summary,
+                context: "AppStore.cleanupWorkspaceArtifacts",
+                details: report.errors.joined(separator: "\n"),
+                filePath: fileStore.tasksURL.path
+            )
+        }
     }
 
     func recordFeedback(run: AgentRunRecord) {
@@ -443,6 +515,23 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
         }
     }
 
+    func revealAgentProfilesFile() {
+        do {
+            try fileStore.writeAgentProfiles(agentProfiles)
+            reveal(path: fileStore.agentProfilesURL.path)
+        } catch {
+            recordDiagnostic(
+                severity: .error,
+                title: "Agent-Profil-Datei kann nicht geöffnet werden",
+                message: error.localizedDescription,
+                context: "AppStore.revealAgentProfilesFile",
+                details: String(describing: error),
+                filePath: fileStore.agentProfilesURL.path
+            )
+            statusMessage = "Agent-Profil-Datei kann nicht geöffnet werden: \(error.localizedDescription)"
+        }
+    }
+
     func showSimpleComposer() {
         selectedSection = .simple
     }
@@ -470,6 +559,10 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
 
     func orchestratorDidAppendLog(runID: UUID, line: String) {
         logsByRunID[runID, default: []].append(line)
+    }
+
+    func orchestratorDidAppendEvent(runID: UUID, event: RunEvent) {
+        runEventsByRunID[runID, default: []].append(event)
     }
 
     func orchestratorDidUpdateTask(_ task: W2RTask) {
@@ -535,11 +628,60 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
         statusMessage = "Alle Diagnostics in die Zwischenablage kopiert."
     }
 
+    func copyText(_ text: String, label: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        statusMessage = "\(label) in die Zwischenablage kopiert."
+    }
+
+    func openExternalURL(_ urlString: String, label: String) {
+        guard let url = URL(string: urlString) else {
+            recordDiagnostic(
+                severity: .error,
+                title: "URL kann nicht geöffnet werden",
+                message: "Die URL ist ungültig: \(urlString)",
+                context: "AppStore.openExternalURL",
+                details: urlString
+            )
+            return
+        }
+        NSWorkspace.shared.open(url)
+        statusMessage = "\(label) geöffnet."
+    }
+
     private func autoSelectedInstallations() -> [CLIInstallation] {
         let installed = installedInstallations
         let native = installed.filter { $0.strategy == .native }
         let wrappers = installed.filter { $0.strategy == .wrapper }
         return Array((native + wrappers).prefix(6))
+    }
+
+    private func resolvedInstallation(_ installation: CLIInstallation) -> CLIInstallation {
+        let profile = profile(for: installation.agent)
+        guard let override = profile.commandPathOverride.trimmed.nilIfEmpty else {
+            return installation
+        }
+
+        guard FileManager.default.isExecutableFile(atPath: override) else {
+            return CLIInstallation(
+                agent: installation.agent,
+                commandName: URL(fileURLWithPath: override).lastPathComponent,
+                commandPath: nil,
+                isInstalled: false,
+                strategy: installation.strategy,
+                notes: "CLI-Override ist nicht ausführbar: \(override)"
+            )
+        }
+
+        return CLIInstallation(
+            agent: installation.agent,
+            commandName: URL(fileURLWithPath: override).lastPathComponent,
+            commandPath: override,
+            isInstalled: true,
+            strategy: installation.strategy,
+            notes: "CLI-Override aus Agent-Profil."
+        )
     }
 
     private func secretValues() -> [String: String] {

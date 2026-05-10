@@ -87,22 +87,46 @@ enum AgentKind: String, CaseIterable, Codable, Hashable, Identifiable {
         }
     }
 
-    func defaultArguments(prompt: String) -> [String] {
+    func defaultArguments(prompt: String, modelOverride: String? = nil) -> [String] {
+        let resolvedModel = modelOverride?.trimmed.nilIfEmpty ?? defaultModelName
         switch self {
         case .claude:
-            return ["-p", prompt]
+            var arguments = ["-p", prompt]
+            if let resolvedModel {
+                arguments.append(contentsOf: ["--model", resolvedModel])
+            }
+            return arguments
         case .gemini:
-            return ["--prompt", prompt]
+            var arguments = ["--prompt", prompt]
+            if let resolvedModel {
+                arguments.append(contentsOf: ["--model", resolvedModel])
+            }
+            return arguments
         case .openAI:
-            return ["exec", prompt]
+            var arguments = ["exec"]
+            if let resolvedModel {
+                arguments.append(contentsOf: ["--model", resolvedModel])
+            }
+            arguments.append(prompt)
+            return arguments
         case .openCode:
-            return ["run", prompt]
+            var arguments = ["run"]
+            if let resolvedModel {
+                arguments.append(contentsOf: ["--model", resolvedModel])
+            }
+            arguments.append(prompt)
+            return arguments
         case .aider:
-            return ["--yes-always", "--message", prompt]
+            var arguments = ["--yes-always"]
+            if let resolvedModel {
+                arguments.append(contentsOf: ["--model", resolvedModel])
+            }
+            arguments.append(contentsOf: ["--message", prompt])
+            return arguments
         case .deepSeek, .qwen, .kimi, .groq, .glm:
             var arguments = ["--yes-always"]
-            if let defaultModelName {
-                arguments.append(contentsOf: ["--model", defaultModelName])
+            if let resolvedModel {
+                arguments.append(contentsOf: ["--model", resolvedModel])
             }
             arguments.append(contentsOf: ["--message", prompt])
             return arguments

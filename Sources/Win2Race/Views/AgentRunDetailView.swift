@@ -3,6 +3,7 @@ import SwiftUI
 struct AgentRunDetailView: View {
     @EnvironmentObject private var store: AppStore
     @State private var answerText = ""
+    @State private var showEvents = false
 
     var body: some View {
         if let run = store.selectedRun {
@@ -60,6 +61,14 @@ struct AgentRunDetailView: View {
                     Text("Commit").foregroundStyle(.secondary)
                     Text(run.commitHash ?? "n/a").textSelection(.enabled)
                 }
+                GridRow {
+                    Text("Output").foregroundStyle(.secondary)
+                    Text(run.lastOutputAt.map(W2RDateFormatter.displayDateTime.string(from:)) ?? "n/a")
+                }
+                GridRow {
+                    Text("Heartbeat").foregroundStyle(.secondary)
+                    Text(run.lastHeartbeatAt.map(W2RDateFormatter.displayDateTime.string(from:)) ?? "n/a")
+                }
             }
             .font(.callout)
 
@@ -76,6 +85,12 @@ struct AgentRunDetailView: View {
                     Label("ADR", systemImage: "doc.text")
                 }
                 .disabled(run.status.isTerminal == false)
+
+                Button {
+                    store.reveal(path: run.eventsPath ?? run.runtimePath)
+                } label: {
+                    Label("Events", systemImage: "list.bullet.rectangle")
+                }
 
                 if !run.status.isTerminal {
                     Button(role: .destructive) {
@@ -150,8 +165,14 @@ struct AgentRunDetailView: View {
     private func logView(_ run: AgentRunRecord) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                SectionHeader("Session Log", subtitle: run.logPath)
+                SectionHeader(showEvents ? "Run Events" : "Session Log", subtitle: showEvents ? (run.eventsPath ?? "events.jsonl") : run.logPath)
                 Spacer()
+                Picker("Ansicht", selection: $showEvents) {
+                    Text("Log").tag(false)
+                    Text("Events").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -159,7 +180,7 @@ struct AgentRunDetailView: View {
             Divider()
 
             ScrollView {
-                Text((store.logsByRunID[run.id] ?? []).joined())
+                Text(showEvents ? eventText(for: run) : (store.logsByRunID[run.id] ?? []).joined())
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -167,5 +188,19 @@ struct AgentRunDetailView: View {
             }
             .background(Color(nsColor: .textBackgroundColor))
         }
+    }
+
+    private func eventText(for run: AgentRunRecord) -> String {
+        let events = store.runEventsByRunID[run.id] ?? []
+        guard !events.isEmpty else {
+            return "Keine strukturierten Events gespeichert."
+        }
+        return events.map { event in
+            """
+            #\(event.sequence) \(W2RDateFormatter.displayDateTime.string(from: event.createdAt)) \(event.type.label)\(event.isError ? " ERROR" : "")
+            \(event.message)
+            """
+        }
+        .joined(separator: "\n\n")
     }
 }

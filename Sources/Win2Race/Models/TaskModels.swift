@@ -124,6 +124,7 @@ struct AgentRunRecord: Identifiable, Codable, Hashable {
     var branchName: String
     var workspacePath: String
     var logPath: String
+    var eventsPath: String? = nil
     var adrPath: String
     var runtimePath: String
     var feedbackPath: String
@@ -136,6 +137,8 @@ struct AgentRunRecord: Identifiable, Codable, Hashable {
     var pendingQuestion: String?
     var errorSummary: String?
     var commitHash: String?
+    var lastOutputAt: Date? = nil
+    var lastHeartbeatAt: Date? = nil
 
     var duration: TimeInterval? {
         guard let startedAt else { return nil }

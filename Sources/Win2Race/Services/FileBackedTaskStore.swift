@@ -4,15 +4,19 @@ final class FileBackedTaskStore {
     let rootURL: URL
     private let fileManager: FileManager
     private let encoder: JSONEncoder
+    private let lineEncoder: JSONEncoder
     private let decoder: JSONDecoder
 
     init(rootURL: URL = FileBackedTaskStore.defaultRootURL, fileManager: FileManager = .default) {
         self.rootURL = rootURL
         self.fileManager = fileManager
         self.encoder = JSONEncoder()
+        self.lineEncoder = JSONEncoder()
         self.decoder = JSONDecoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
+        lineEncoder.outputFormatting = [.sortedKeys]
+        lineEncoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
     }
 
@@ -33,6 +37,10 @@ final class FileBackedTaskStore {
 
     var diagnosticsURL: URL {
         rootURL.appendingPathComponent("diagnostics.jsonl")
+    }
+
+    var agentProfilesURL: URL {
+        configURL.appendingPathComponent("agent-profiles.json")
     }
 
     func ensureRoot() throws {
@@ -98,6 +106,39 @@ final class FileBackedTaskStore {
         try runtimeMarkdown(run).write(to: URL(fileURLWithPath: run.runtimePath), atomically: true, encoding: .utf8)
     }
 
+    func loadAgentProfiles() -> [AgentKind: AgentProfile] {
+        guard fileManager.fileExists(atPath: agentProfilesURL.path) else {
+            return Dictionary(uniqueKeysWithValues: AgentKind.allCases.map { ($0, .default(for: $0)) })
+        }
+
+        do {
+            let profiles = try decode([AgentProfile].self, from: agentProfilesURL)
+            var result = Dictionary(uniqueKeysWithValues: profiles.map { ($0.agent, $0) })
+            for agent in AgentKind.allCases where result[agent] == nil {
+                result[agent] = .default(for: agent)
+            }
+            return result
+        } catch {
+            try? writeDiagnostic(
+                DiagnosticRecord(
+                    severity: .warning,
+                    title: "Agent-Profile konnten nicht geladen werden",
+                    message: error.localizedDescription,
+                    context: "FileBackedTaskStore.loadAgentProfiles",
+                    details: String(describing: error),
+                    filePath: agentProfilesURL.path
+                )
+            )
+            return Dictionary(uniqueKeysWithValues: AgentKind.allCases.map { ($0, .default(for: $0)) })
+        }
+    }
+
+    func writeAgentProfiles(_ profiles: [AgentKind: AgentProfile]) throws {
+        try ensureRoot()
+        let ordered = AgentKind.allCases.map { profiles[$0] ?? .default(for: $0) }
+        try encode(ordered, to: agentProfilesURL)
+    }
+
     func appendLog(_ text: String, to run: AgentRunRecord) throws {
         let url = URL(fileURLWithPath: run.logPath)
         let data = Data(text.utf8)
@@ -112,6 +153,96 @@ final class FileBackedTaskStore {
             try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
         }
+    }
+
+    func appendRunEvent(_ event: RunEvent, to run: AgentRunRecord) throws {
+        let url = URL(fileURLWithPath: run.eventsPath ?? defaultEventsPath(for: run))
+        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var data = try lineEncoder.encode(event)
+        data.append(Data("\n".utf8))
+
+        if fileManager.fileExists(atPath: url.path) {
+            let handle = try FileHandle(forWritingTo: url)
+            defer {
+                try? handle.close()
+            }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+        } else {
+            try data.write(to: url, options: .atomic)
+        }
+    }
+
+    func loadRunEvents(for run: AgentRunRecord) -> [RunEvent] {
+        let url = URL(fileURLWithPath: run.eventsPath ?? defaultEventsPath(for: run))
+        guard fileManager.fileExists(atPath: url.path),
+              let content = try? String(contentsOf: url, encoding: .utf8) else {
+            return []
+        }
+
+        var events: [RunEvent] = []
+        for (index, line) in content.split(whereSeparator: \.isNewline).enumerated() {
+            do {
+                events.append(try decoder.decode(RunEvent.self, from: Data(line.utf8)))
+            } catch {
+                try? writeDiagnostic(
+                    DiagnosticRecord(
+                        severity: .warning,
+                        title: "Run-Event konnte nicht gelesen werden",
+                        message: error.localizedDescription,
+                        context: "FileBackedTaskStore.loadRunEvents.line.\(index + 1)",
+                        details: "Raw line:\n\(line)\n\nError:\n\(String(describing: error))",
+                        filePath: url.path,
+                        taskID: run.taskID,
+                        runID: run.id
+                    )
+                )
+            }
+        }
+
+        return events.sorted { $0.sequence < $1.sequence }
+    }
+
+    func cleanupArtifacts(patterns: [String] = ["node_modules", ".next", ".turbo", ".build", "DerivedData"]) -> WorkspaceCleanupReport {
+        let normalizedPatterns = Set(patterns.map(\.trimmed).filter { !$0.isEmpty && !$0.contains("/") && !$0.contains("\\") })
+        guard !normalizedPatterns.isEmpty else {
+            return WorkspaceCleanupReport(removedItems: 0, reclaimedBytes: 0, errors: ["Keine gültigen Artifact-Patterns konfiguriert."])
+        }
+
+        var removed = 0
+        var bytes: UInt64 = 0
+        var errors: [String] = []
+
+        guard let enumerator = fileManager.enumerator(
+            at: tasksURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey],
+            options: []
+        ) else {
+            return WorkspaceCleanupReport(removedItems: 0, reclaimedBytes: 0, errors: ["Tasks-Verzeichnis konnte nicht durchsucht werden: \(tasksURL.path)"])
+        }
+
+        for case let url as URL in enumerator {
+            if url.lastPathComponent == ".git" {
+                enumerator.skipDescendants()
+                continue
+            }
+
+            guard normalizedPatterns.contains(url.lastPathComponent) else {
+                continue
+            }
+
+            do {
+                let size = allocatedSize(of: url)
+                try fileManager.removeItem(at: url)
+                removed += 1
+                bytes += size
+                enumerator.skipDescendants()
+            } catch {
+                errors.append("\(url.path): \(error.localizedDescription)")
+            }
+        }
+
+        return WorkspaceCleanupReport(removedItems: removed, reclaimedBytes: bytes, errors: errors)
     }
 
     func writeADR(for task: W2RTask, run: AgentRunRecord, diffStat: String, validation: String) throws {
@@ -237,7 +368,7 @@ final class FileBackedTaskStore {
 
     func writeDiagnostic(_ diagnostic: DiagnosticRecord) throws {
         try ensureRoot()
-        var data = try encoder.encode(diagnostic)
+        var data = try lineEncoder.encode(diagnostic)
         data.append(Data("\n".utf8))
 
         if fileManager.fileExists(atPath: diagnosticsURL.path) {
@@ -364,8 +495,11 @@ final class FileBackedTaskStore {
         - Branch: \(run.branchName)
         - Workspace: \(run.workspacePath)
         - Command: \(run.commandPath)
+        - Events: \(run.eventsPath ?? defaultEventsPath(for: run))
         - Started: \(run.startedAt.map(W2RDateFormatter.displayDateTime.string(from:)) ?? "Not started")
         - Ended: \(run.endedAt.map(W2RDateFormatter.displayDateTime.string(from:)) ?? "Still running")
+        - Last Output: \(run.lastOutputAt.map(W2RDateFormatter.displayDateTime.string(from:)) ?? "Unavailable")
+        - Last Heartbeat: \(run.lastHeartbeatAt.map(W2RDateFormatter.displayDateTime.string(from:)) ?? "Unavailable")
         - Exit Code: \(run.exitCode.map(String.init) ?? "n/a")
         - Estimated Tokens: \(run.estimatedTokens)
         - Estimated Cost: \(run.estimatedCost.map(String.init(describing:)) ?? "Unavailable")
@@ -387,5 +521,26 @@ final class FileBackedTaskStore {
     private func decode<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
         let data = try Data(contentsOf: url)
         return try decoder.decode(type, from: data)
+    }
+
+    private func defaultEventsPath(for run: AgentRunRecord) -> String {
+        URL(fileURLWithPath: run.runtimePath).deletingLastPathComponent().appendingPathComponent("events.jsonl").path
+    }
+
+    private func allocatedSize(of url: URL) -> UInt64 {
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileAllocatedSizeKey, .totalFileAllocatedSizeKey],
+            options: []
+        ) else {
+            return 0
+        }
+
+        var total: UInt64 = 0
+        for case let item as URL in enumerator {
+            let values = try? item.resourceValues(forKeys: [.isRegularFileKey, .fileAllocatedSizeKey, .totalFileAllocatedSizeKey])
+            total += UInt64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0)
+        }
+        return total
     }
 }
