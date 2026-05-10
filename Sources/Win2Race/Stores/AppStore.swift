@@ -334,7 +334,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
             selectedRunID = nil
             selectedSection = .dashboard
             statusMessage = "Starte \(selected.count) Agenten für \(task.title)."
-            orchestrator.start(task: task, installations: selected, secrets: secretValues(), profiles: agentProfiles)
+            orchestrator.start(task: task, installations: selected, secrets: secretValues(for: selected), profiles: agentProfiles)
             draft = TaskDraft()
         } catch {
             recordDiagnostic(
@@ -411,7 +411,7 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
             selectedRunID = nil
             selectedSection = .dashboard
             statusMessage = "Advanced-Task gestartet: \(task.title)"
-            orchestrator.start(task: task, installations: selected, secrets: secretValues(), profiles: agentProfiles)
+            orchestrator.start(task: task, installations: selected, secrets: secretValues(for: selected), profiles: agentProfiles)
         } catch {
             recordDiagnostic(
                 severity: .error,
@@ -780,12 +780,17 @@ final class AppStore: ObservableObject, OrchestratorEngineDelegate {
         )
     }
 
-    private func secretValues() -> [String: String] {
+    private func secretValues(for installations: [CLIInstallation]) -> [String: String] {
+        let requiredKeys = Set(installations.flatMap { $0.agent.requiredEnvironmentKeys })
         var result: [String: String] = [:]
-        for state in providerSecretStates {
-            if let value = KeychainService.read(account: state.key) {
-                result[state.key] = value
+        for key in requiredKeys {
+            guard let testResult = tokenTestResults[key],
+                  testResult.succeeded,
+                  testResult.budgetLikelyAvailable,
+                  let value = KeychainService.read(account: key) else {
+                continue
             }
+            result[key] = value
         }
         return result
     }
