@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Win-to-Race &mdash; Race AI Coding Agents on Real Tasks</title>
-  <meta name="description" content="Native macOS app that races multiple AI coding agents on the same engineering task. Each agent gets its own branch, workspace, logs, and ADR.">
+  <meta name="description" content="Native macOS app that races multiple AI coding agents on real engineering tasks with isolated workspaces, live logs, ADRs, setup guidance, and provider token checks.">
   <style>
     :root {
       color-scheme: light dark;
@@ -358,7 +358,7 @@
       <p class="tagline">
         A native macOS app that races multiple AI coding agents on the same real engineering task.
         One repository and one problem go in &mdash; isolated agent runs, live logs, ADRs, feedback records,
-        and comparable results come out.
+        provider token checks, and comparable results come out.
       </p>
       <div class="actions">
         <a class="btn primary" href="https://github.com/GodModeAI2025/win2race">View on GitHub</a>
@@ -381,15 +381,15 @@
         </div>
         <div class="step">
           <h3>Select Agents</h3>
-          <p>Win-to-Race auto-detects installed CLIs. Pick which agents should compete, or let all available ones race.</p>
+          <p>Win-to-Race auto-detects installed CLIs and shows exactly what must be installed, saved, tested, or fixed before setup is green.</p>
         </div>
         <div class="step">
-          <h3>Parallel Execution</h3>
-          <p>Each agent gets its own Git branch, workspace directory, environment, and live log stream. No interference between runs.</p>
+          <h3>Verify Providers</h3>
+          <p>Each saved API token can be tested for auth, access, and likely budget/quotas before any agent run starts.</p>
         </div>
         <div class="step">
-          <h3>Compare &amp; Learn</h3>
-          <p>Review diffs, runtime metrics, and generated ADRs side by side. Rate results to build long-term learning data.</p>
+          <h3>Race &amp; Learn</h3>
+          <p>Each agent gets its own branch, workspace, logs, and ADR. Review the outputs and rate results to build long-term learning data.</p>
         </div>
       </div>
     </section>
@@ -430,6 +430,8 @@
         <li>Isolated Git branches per agent run</li>
         <li>Live streaming logs with pending-question detection</li>
         <li>Keychain-backed API key storage</li>
+        <li>Per-token Test buttons for provider auth and budget checks</li>
+        <li>Actionable setup overview for making every item green</li>
         <li>Per-agent workspace and environment isolation</li>
         <li>Generated Architecture Decision Records (ADRs)</li>
         <li>Markdown-based task parser for batch runs</li>
@@ -443,6 +445,38 @@
         <li>Environment variable editor for provider keys</li>
         <li>Built with SwiftUI for native macOS look and feel</li>
       </ul>
+    </section>
+
+    <!-- Setup Guidance -->
+    <section>
+      <h2>Setup Guidance &amp; Token Checks</h2>
+      <p class="subtitle">
+        The Setup screen is strict by design: a provider key is green only after it is saved and successfully tested.
+        Failed checks stay visible with copyable diagnostics so errors do not disappear in logs.
+      </p>
+      <div class="grid-3">
+        <article class="card">
+          <h3>What to Do Next</h3>
+          <p>
+            The overview points to the next concrete action: install a CLI, open a provider key page,
+            paste a token, run a token test, fix ENV syntax, or copy a diagnostic.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Provider Probes</h3>
+          <p>
+            OpenAI, Anthropic, Gemini, Groq, DeepSeek, Moonshot, and Z.ai are checked with minimal model requests.
+            OpenRouter uses its key metadata endpoint and reads usage/limit when available.
+          </p>
+        </article>
+        <article class="card">
+          <h3>No DashScope Requirement</h3>
+          <p>
+            Qwen runs through OpenRouter in V1. DashScope keys are not required, and legacy DashScope entries are
+            removed from the generated Qwen environment file.
+          </p>
+        </article>
+      </div>
     </section>
 
     <!-- Two Modes -->
@@ -531,10 +565,14 @@ dropped socket and reconnect with exponential backoff.
 |  | ProcessRunner     |  | MarkdownTask     |  | FileBackedTask | |
 |  | (subprocess I/O)  |  | Parser           |  | Store          | |
 |  +-------------------+  +------------------+  +----------------+ |
-|  +-------------------+  +------------------+                     |
-|  | AgentPrompt       |  | SandboxProfile   |                     |
-|  | Factory           |  | Builder          |                     |
-|  +-------------------+  +------------------+                     |
+|  +-------------------+  +------------------+  +----------------+ |
+|  | ProviderToken     |  | SetupGuidance    |  | SandboxProfile | |
+|  | Tester            |  | (next actions)   |  | Builder        | |
+|  +-------------------+  +------------------+  +----------------+ |
+|  +-------------------+                                           |
+|  | AgentPrompt       |                                           |
+|  | Factory           |                                           |
+|  +-------------------+                                           |
 +------------------------------------------------------------------+
 |  Persistence: ~/Documents/Win2Race/workspace (Markdown files)    |
 +------------------------------------------------------------------+</div>
@@ -584,7 +622,7 @@ dropped socket and reconnect with exponential backoff.
             <li>macOS 14 (Sonoma) or later</li>
             <li>Xcode 16+ or Swift 6.0+ toolchain</li>
             <li>At least one AI coding CLI installed (e.g. <code>claude</code>, <code>gemini</code>, <code>codex</code>, <code>aider</code>)</li>
-            <li>API keys for the providers you want to use</li>
+            <li>API keys for the providers you want to use, saved and tested in Setup</li>
           </ul>
         </article>
         <article class="card">
@@ -612,6 +650,7 @@ dropped socket and reconnect with exponential backoff.
             <li>Simple Mode orchestration</li>
             <li>Advanced Mode task parsing</li>
             <li>Keychain API key storage</li>
+            <li>Provider token testing</li>
             <li>Live log streaming</li>
           </ul>
         </article>
@@ -622,6 +661,7 @@ dropped socket and reconnect with exponential backoff.
             <li>Workspace file persistence</li>
             <li>Runtime reports</li>
             <li>Diagnostics view</li>
+            <li>Copyable setup and token-test failures</li>
             <li>Feedback rating system</li>
             <li>Learning data aggregation</li>
           </ul>

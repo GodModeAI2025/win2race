@@ -6,6 +6,7 @@ Win-to-Race is a native macOS app that orchestrates multiple coding CLIs on the 
 
 - Native SwiftUI macOS app with Simple Mode and Advanced Mode.
 - Automatic CLI discovery for Claude, Gemini, Codex, aider/OpenCode-based providers, and prepared frontier-provider slots.
+- Actionable Setup overview that tells the user what to install, save, test, or fix next before the app is green.
 - File-backed Markdown persistence under `~/Documents/Win2Race/workspace`.
 - Per-agent workspace, branch naming, runtime logs, generated ADR, and feedback files.
 - Runtime registry with CLI/profile health, capabilities, and per-agent command overrides.
@@ -13,8 +14,45 @@ Win-to-Race is a native macOS app that orchestrates multiple coding CLIs on the 
 - Agent profiles for model override, extra CLI arguments, timeout, Git commit identity, and per-agent SSH key preparation.
 - Workspace root visibility and safe artifact cleanup for regenerable directories.
 - Interactive session handling with live logs and a pending-question state.
-- Secure API-key storage through the macOS Keychain.
+- Secure API-key storage through the macOS Keychain, plus per-token test buttons for auth, access, and budget/quota checks.
+- Copyable diagnostics for failed setup, provider, runtime, parser, and process errors.
 - Markdown task parser for Advanced Mode.
+
+## Setup Readiness
+
+The Setup screen is intentionally strict. A provider token is not considered green just because it exists in the macOS Keychain. Each token must be saved and then tested.
+
+The overview tells the user the next concrete action:
+
+- install a missing CLI
+- open the correct provider key page
+- paste and save a missing token
+- run the token test
+- fix ENV syntax
+- copy a failed diagnostic message
+
+This avoids the old failure mode where setup looked ready but the first agent run failed because the key was invalid, had no model access, or had no usable budget.
+
+## API Token Tests
+
+Each saved API token has its own `Test` button in Setup. The test performs the smallest practical provider check and stores a copyable result.
+
+Supported test plans:
+
+| Key | Provider | Check |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | Claude/Anthropic | Minimal Claude Messages request |
+| `OPENAI_API_KEY` | OpenAI | Minimal Responses API request |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Google | Minimal Gemini generateContent request |
+| `GROQ_API_KEY` | Groq | Minimal OpenAI-compatible chat request |
+| `DEEPSEEK_API_KEY` | DeepSeek | Minimal chat request |
+| `OPENROUTER_API_KEY` | OpenRouter | Key metadata endpoint with usage/limit parsing |
+| `MOONSHOT_API_KEY` | Kimi/Moonshot | Minimal chat request |
+| `ZAI_API_KEY` | Z.ai / GLM | Minimal chat request |
+
+Most provider tests make a minimal model call and can consume a tiny amount of budget. OpenRouter uses its key metadata endpoint where possible and marks exhausted limits as not green.
+
+Qwen uses OpenRouter in V1. DashScope is intentionally not required.
 
 ## Advanced Task Format
 
@@ -55,3 +93,11 @@ Use the project-local run entrypoint:
 ```
 
 The script builds the SwiftPM GUI target, stages `dist/Win2Race.app`, and launches the app as a proper macOS application bundle.
+
+For validation:
+
+```bash
+swift build
+swift test
+./script/build_and_run.sh --verify
+```
