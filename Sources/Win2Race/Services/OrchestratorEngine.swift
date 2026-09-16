@@ -168,7 +168,8 @@ final class OrchestratorEngine {
 
             let clone = await ProcessRunner.run(
                 executable: "/usr/bin/git",
-                arguments: ["clone", task.repository, workspaceURL.path],
+                // `--` ends option parsing so a repository value such as `--upload-pack=...` cannot inject git options.
+                arguments: ["clone", "--", task.repository, workspaceURL.path],
                 environment: gitEnvironment(for: profile),
                 timeout: 1_200
             )
@@ -190,6 +191,20 @@ final class OrchestratorEngine {
             guard checkout.succeeded else {
                 fail(runID: runID, summary: "Branch konnte nicht erstellt werden.")
                 return
+            }
+
+            // Remember the base commit so results also cover commits the agent creates itself.
+            let baseRevision = await ProcessRunner.run(
+                executable: "/usr/bin/git",
+                arguments: ["rev-parse", "HEAD"],
+                currentDirectory: workspaceURL,
+                timeout: 120
+            )
+            if baseRevision.succeeded, let baseCommit = baseRevision.stdout.trimmed.nilIfEmpty {
+                contexts[runID]?.baseCommit = baseCommit
+                appendEvent(.git, message: "Base commit \(baseCommit).", runID: runID)
+            } else {
+                appendProcessResult("git rev-parse HEAD", baseRevision, runID: runID)
             }
 
             let profileURL: URL?
@@ -321,13 +336,6 @@ final class OrchestratorEngine {
 
         appendLog("[w2r] Process exited with code \(exitCode).\n", runID: runID)
         appendEvent(.lifecycle, message: "Process exited with code \(exitCode).", isError: exitCode != 0, runID: runID)
-        let diffStat = await ProcessRunner.run(
-            executable: "/usr/bin/git",
-            arguments: ["diff", "--stat"],
-            currentDirectory: context.workspaceURL,
-            timeout: 120
-        ).stdout
-
         var validation = "Exit code: \(exitCode)"
         var commitHash: String?
 
@@ -335,6 +343,28 @@ final class OrchestratorEngine {
             let commitResult = await commitChanges(context: context)
             validation += "\n\(commitResult.validation)"
             commitHash = commitResult.commitHash
+        }
+
+        // Diff against the base commit after W2R's own commit, so new files and agent-made commits are included.
+        // Without a known base, fall back to the uncommitted working-tree diff.
+        let diffStat = await ProcessRunner.run(
+            executable: "/usr/bin/git",
+            arguments: context.baseCommit.map { ["diff", "--stat", $0] } ?? ["diff", "--stat"],
+            currentDirectory: context.workspaceURL,
+            timeout: 120
+        ).stdout
+
+        if commitHash == nil, let baseCommit = context.baseCommit {
+            let head = await ProcessRunner.run(
+                executable: "/usr/bin/git",
+                arguments: ["rev-parse", "HEAD"],
+                currentDirectory: context.workspaceURL,
+                timeout: 120
+            ).stdout.trimmed
+            if !head.isEmpty, head != baseCommit {
+                commitHash = String(head.prefix(7))
+                validation += "\nAgent created its own commit(s); branch head is \(String(head.prefix(7)))."
+            }
         }
 
         context.run.status = exitCode == 0 ? .succeeded : .failed
@@ -720,6 +750,7 @@ private struct RunContext {
     var run: AgentRunRecord
     var runDirectory: URL
     var workspaceURL: URL
+    var baseCommit: String? = nil
 }
 
 private extension AgentRunRecord {
