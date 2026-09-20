@@ -11,6 +11,24 @@ protocol OrchestratorEngineDelegate: AnyObject {
 
 @MainActor
 final class OrchestratorEngine {
+    /// How often a running agent is checked for new output.
+    private static let stallCheckInterval: TimeInterval = 60
+    /// Bounds for the silence a run may show before Win-to-Race reports it.
+    private static let stallWarningRange: ClosedRange<TimeInterval> = 300...1_800
+
+    /// How long an agent may stay silent before Win-to-Race reports it.
+    ///
+    /// Several CLIs print nothing while they work — `claude -p` returns its text in one piece at
+    /// the end — so a fixed threshold would report healthy runs. The profile timeout is the number
+    /// the user already sets per agent and says how long a run may take at all; a quarter of it is
+    /// long enough for a thinking phase and still well before the timeout terminates the process.
+    private static func stallWarningSeconds(timeoutSeconds: Int) -> TimeInterval {
+        guard timeoutSeconds > 0 else {
+            return stallWarningRange.upperBound
+        }
+        return min(max(TimeInterval(timeoutSeconds) / 4, stallWarningRange.lowerBound), stallWarningRange.upperBound)
+    }
+
     weak var delegate: OrchestratorEngineDelegate?
 
     private let store: FileBackedTaskStore
@@ -85,6 +103,7 @@ final class OrchestratorEngine {
         appendEvent(.userInput, message: text, runID: runID)
         context.run.status = .running
         context.run.pendingQuestion = nil
+        context.run.lastHeartbeatAt = Date()
         context.run.lastAction = "Nutzerantwort gesendet."
         publish(context.run)
     }
@@ -272,6 +291,7 @@ final class OrchestratorEngine {
             publish(run)
             appendEvent(.heartbeat, message: "CLI gestartet.", runID: runID)
             scheduleTimeout(runID: runID, seconds: profile.timeoutSeconds)
+            scheduleStallWatch(runID: runID, timeoutSeconds: profile.timeoutSeconds)
 
             _ = try AgentRuntime.start(
                 runID: runID,
@@ -689,6 +709,40 @@ final class OrchestratorEngine {
             environment["W2R_MODEL"] = model
         }
         return environment
+    }
+
+    // A silent agent looks exactly like a working one until the timeout fires hours later,
+    // so report the silence as soon as it becomes suspicious.
+    private func scheduleStallWatch(runID: UUID, timeoutSeconds: Int) {
+        let threshold = Self.stallWarningSeconds(timeoutSeconds: timeoutSeconds)
+        Task { @MainActor in
+            var reportedSince: Date?
+            while true {
+                try? await Task.sleep(nanoseconds: UInt64(Self.stallCheckInterval) * 1_000_000_000)
+                guard Task.isCancelled == false else {
+                    return
+                }
+                guard let context = contexts[runID], context.run.status.isTerminal == false else {
+                    return
+                }
+                guard context.run.status == .running else {
+                    continue
+                }
+                var run = context.run
+                // The last sign of life is either output from the agent or input sent to it.
+                let since = [run.lastOutputAt, run.lastHeartbeatAt, run.startedAt].compactMap { $0 }.max() ?? Date()
+                let silence = Date().timeIntervalSince(since)
+                guard silence >= threshold, reportedSince != since else {
+                    continue
+                }
+                reportedSince = since
+                let minutes = Int(silence / 60)
+                appendLog("[w2r] No agent output for \(minutes) minutes.\n", runID: runID)
+                appendEvent(.heartbeat, message: "No agent output for \(minutes) minutes.", runID: runID)
+                run.lastAction = "Keine Ausgabe seit \(minutes) Minuten."
+                publish(run)
+            }
+        }
     }
 
     private func scheduleTimeout(runID: UUID, seconds: Int) {
