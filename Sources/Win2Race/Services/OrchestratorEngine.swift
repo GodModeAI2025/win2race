@@ -11,6 +11,11 @@ protocol OrchestratorEngineDelegate: AnyObject {
 
 @MainActor
 final class OrchestratorEngine {
+    /// How often a running agent is checked for new output.
+    private static let stallCheckInterval: TimeInterval = 60
+    /// How long an agent may stay silent before Win-to-Race reports it.
+    private static let stallWarningSeconds: TimeInterval = 600
+
     weak var delegate: OrchestratorEngineDelegate?
 
     private let store: FileBackedTaskStore
@@ -85,6 +90,7 @@ final class OrchestratorEngine {
         appendEvent(.userInput, message: text, runID: runID)
         context.run.status = .running
         context.run.pendingQuestion = nil
+        context.run.lastHeartbeatAt = Date()
         context.run.lastAction = "Nutzerantwort gesendet."
         publish(context.run)
     }
@@ -272,6 +278,7 @@ final class OrchestratorEngine {
             publish(run)
             appendEvent(.heartbeat, message: "CLI gestartet.", runID: runID)
             scheduleTimeout(runID: runID, seconds: profile.timeoutSeconds)
+            scheduleStallWatch(runID: runID)
 
             _ = try AgentRuntime.start(
                 runID: runID,
@@ -689,6 +696,36 @@ final class OrchestratorEngine {
             environment["W2R_MODEL"] = model
         }
         return environment
+    }
+
+    // A silent agent looks exactly like a working one until the timeout fires hours later,
+    // so report the silence as soon as it becomes suspicious.
+    private func scheduleStallWatch(runID: UUID) {
+        Task { @MainActor in
+            var reportedSince: Date?
+            while true {
+                try? await Task.sleep(nanoseconds: UInt64(Self.stallCheckInterval) * 1_000_000_000)
+                guard let context = contexts[runID], context.run.status.isTerminal == false else {
+                    return
+                }
+                guard context.run.status == .running else {
+                    continue
+                }
+                var run = context.run
+                // The last sign of life is either output from the agent or input sent to it.
+                let since = [run.lastOutputAt, run.lastHeartbeatAt, run.startedAt].compactMap { $0 }.max() ?? Date()
+                let silence = Date().timeIntervalSince(since)
+                guard silence >= Self.stallWarningSeconds, reportedSince != since else {
+                    continue
+                }
+                reportedSince = since
+                let minutes = Int(silence / 60)
+                appendLog("[w2r] No agent output for \(minutes) minutes.\n", runID: runID)
+                appendEvent(.heartbeat, message: "No agent output for \(minutes) minutes.", runID: runID)
+                run.lastAction = "Keine Ausgabe seit \(minutes) Minuten."
+                publish(run)
+            }
+        }
     }
 
     private func scheduleTimeout(runID: UUID, seconds: Int) {

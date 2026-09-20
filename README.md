@@ -12,6 +12,7 @@ Win-to-Race is a native macOS app that orchestrates multiple coding CLIs on the 
 - Diff stats in `result.md` and the ADR are measured against the run's base commit, so new files and commits made by the agent itself are included.
 - Runtime registry with CLI/profile health, capabilities, and per-agent command overrides.
 - Structured per-run `events.jsonl` beside `session.log` for machine-readable lifecycle, stdout, stderr, git, question, error, and heartbeat events.
+- Stall watch that reports an agent without output for ten minutes in the log, the run events, and the dashboard, instead of leaving it silent until the timeout.
 - Agent profiles for model override, extra CLI arguments, timeout, Git commit identity, and per-agent SSH key preparation.
 - Workspace root visibility and safe artifact cleanup for regenerable directories.
 - Interactive session handling with live logs and a pending-question state.
